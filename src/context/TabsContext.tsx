@@ -20,7 +20,6 @@ interface TabsContextValue {
 }
 
 const TabsContext = createContext<TabsContextValue>(null!)
-let nextId = 1
 
 export function TabsProvider({ children }: { children: React.ReactNode }) {
   const [tabs, setTabs] = useState<Tab[]>([])
@@ -28,9 +27,22 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
   const [restored, setRestored] = useState(false)
   const saveTimers = useRef(new Map<number, ReturnType<typeof setTimeout>>())
   const tabsRef = useRef<Tab[]>([])
+  const nextIdRef = useRef(1)
+  const activeIdRef = useRef(0)
 
   // Keep tabsRef in sync so callbacks can read current tabs without stale closures
   useEffect(() => { tabsRef.current = tabs }, [tabs])
+
+  // Keep activeIdRef in sync so closeTab never captures a stale activeId
+  useEffect(() => { activeIdRef.current = activeId }, [activeId])
+
+  // Clear all pending save timers on unmount
+  useEffect(() => {
+    return () => {
+      saveTimers.current.forEach(t => clearTimeout(t))
+      saveTimers.current.clear()
+    }
+  }, [])
 
   const loadTabs = useCallback(async () => {
     saveTimers.current.forEach(t => clearTimeout(t))
@@ -44,7 +56,7 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
         const dir = await invoke<string>('get_queries_dir')
         const filePath = `${dir}/Query 1.sql`
         await invoke('write_query_file', { path: filePath, content: '' })
-        nextId = 2
+        nextIdRef.current = 2
         setTabs([{ id: 1, title: 'Query 1', filePath, content: '', isDirty: false }])
         setActiveIdState(1)
       } else {
@@ -55,7 +67,7 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
             return { id, title: f.name, filePath: f.path, content, isDirty: false }
           })
         )
-        nextId = loadedTabs.length + 1
+        nextIdRef.current = loadedTabs.length + 1
         setTabs(loadedTabs)
 
         const activeFile = await invoke<string | null>('get_setting', { key: 'active_query_file' })
@@ -66,7 +78,7 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
       console.error('Session restore failed:', e)
       setTabs([{ id: 1, title: 'Query 1', filePath: '', content: '', isDirty: false }])
       setActiveIdState(1)
-      nextId = 2
+      nextIdRef.current = 2
     } finally {
       setRestored(true)
     }
@@ -91,7 +103,7 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
       const title = `Query ${n}`
       const filePath = `${dir}/${title}.sql`
       await invoke('write_query_file', { path: filePath, content: '' })
-      const id = nextId++
+      const id = nextIdRef.current++
       setTabs(prev => [...prev, { id, title, filePath, content: '', isDirty: false }])
       setActiveIdState(id)
       invoke('set_setting', { key: 'active_query_file', value: title }).catch(() => {})
@@ -111,12 +123,12 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
     const next = current.filter(t => t.id !== id)
     setTabs(next)
 
-    if (id === activeId) {
+    if (id === activeIdRef.current) {
       const newActive = next[Math.min(idx, next.length - 1)]
       setActiveIdState(newActive.id)
       invoke('set_setting', { key: 'active_query_file', value: newActive.title }).catch(() => {})
     }
-  }, [activeId])
+  }, [])
 
   const updateContent = useCallback((id: number, content: string) => {
     setTabs(prev => prev.map(t => t.id === id ? { ...t, content, isDirty: true } : t))
@@ -141,6 +153,11 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const renameTab = useCallback(async (id: number, newTitle: string) => {
+    const existing = saveTimers.current.get(id)
+    if (existing) {
+      clearTimeout(existing)
+      saveTimers.current.delete(id)
+    }
     const tab = tabsRef.current.find(t => t.id === id)
     if (!tab || tab.title === newTitle || !newTitle.trim()) return
     const dir = tab.filePath.substring(0, tab.filePath.lastIndexOf('/'))
