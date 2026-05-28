@@ -4,7 +4,13 @@ mod domain;
 mod infrastructure;
 
 use commands::marketplace::{install_theme, search_marketplace};
+use commands::queries::{
+    delete_query_file, get_queries_dir, list_query_files, read_query_file,
+    rename_query_file, set_queries_dir, write_query_file,
+};
 use commands::settings::{delete_theme, get_setting, get_themes, save_theme, set_setting};
+use commands::sql_completion::get_sql_completions;
+use commands::sql_validation::validate_sql;
 use infrastructure::database::AppState;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
 use std::str::FromStr;
@@ -41,6 +47,15 @@ pub fn run() {
             get_themes,
             save_theme,
             delete_theme,
+            get_sql_completions,
+            validate_sql,
+            get_queries_dir,
+            set_queries_dir,
+            list_query_files,
+            read_query_file,
+            write_query_file,
+            delete_query_file,
+            rename_query_file,
         ])
         .run(tauri::generate_context!())
         .expect("error running tauri app");
