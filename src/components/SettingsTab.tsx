@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Search, Download, Check, Loader2 } from 'lucide-react'
+import { Search, Download, Check, Loader2, Trash2, RefreshCw } from 'lucide-react'
 import { useTheme } from '@/context/ThemeContext'
+import { useTabs } from '@/context/TabsContext'
 import type { Theme } from '@/themes'
 
 interface MarketplaceExtension {
@@ -12,30 +13,66 @@ interface MarketplaceExtension {
   version: string
 }
 
+interface TokenRule { token: string; foreground?: string; font_style?: string }
+
 interface ParsedTheme {
   name: string; bg: string; sidebar_bg: string; activity_bg: string
   tab_active: string; tab_inactive: string; tab_accent: string
   border: string; text: string; text_dim: string; text_bright: string
-  statusbar: string; hover: string
+  statusbar: string; hover: string; token_rules: TokenRule[]
 }
 
-function parsedToTheme(p: ParsedTheme): Theme {
+function parsedToTheme(p: ParsedTheme, ext: MarketplaceExtension): Theme {
   return {
     name: p.name, bg: p.bg, sidebarBg: p.sidebar_bg, activityBg: p.activity_bg,
     tabActive: p.tab_active, tabInactive: p.tab_inactive, tabAccent: p.tab_accent,
     border: p.border, text: p.text, textDim: p.text_dim, textBright: p.text_bright,
     statusbar: p.statusbar, hover: p.hover,
+    tokenRules: p.token_rules,
+    source: {
+      publisher: ext.publisher,
+      name: ext.name,
+      version: ext.version,
+      displayName: ext.display_name,
+    },
   }
 }
 
 export default function SettingsTab() {
-  const { theme, setTheme, allThemes, addTheme } = useTheme()
+  const { theme, setTheme, allThemes, addTheme, removeTheme, isBuiltin } = useTheme()
+  const { reloadTabs } = useTabs()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<MarketplaceExtension[]>([])
   const [searching, setSearching] = useState(false)
   const [installing, setInstalling] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const searchRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [queriesDir, setQueriesDir] = useState('')
+  const [dirInput, setDirInput] = useState('')
+  const [dirSaving, setDirSaving] = useState(false)
+  const [dirError, setDirError] = useState<string | null>(null)
+
+  useEffect(() => {
+    invoke<string>('get_queries_dir')
+      .then(dir => { setQueriesDir(dir); setDirInput(dir) })
+      .catch(() => {})
+  }, [])
+
+  const saveDir = async () => {
+    const trimmed = dirInput.trim()
+    if (!trimmed || trimmed === queriesDir) return
+    setDirSaving(true)
+    setDirError(null)
+    try {
+      await invoke('set_queries_dir', { path: trimmed })
+      setQueriesDir(trimmed)
+      await reloadTabs()
+    } catch (e) {
+      setDirError(String(e))
+    } finally {
+      setDirSaving(false)
+    }
+  }
 
   useEffect(() => {
     if (searchRef.current) clearTimeout(searchRef.current)
@@ -58,9 +95,17 @@ export default function SettingsTab() {
       const themes = await invoke<ParsedTheme[]>('install_theme', {
         publisher: ext.publisher, name: ext.name, version: ext.version,
       })
-      themes.forEach(t => addTheme(parsedToTheme(t)))
+      themes.forEach(t => addTheme(parsedToTheme(t, ext)))
     } catch (e) { setError(String(e)) }
     finally { setInstalling(null) }
+  }
+
+  const reinstallGroup = async (source: NonNullable<Theme['source']>) => {
+    const fakeExt: MarketplaceExtension = {
+      publisher: source.publisher, name: source.name,
+      version: source.version, display_name: source.displayName, description: '',
+    }
+    await install(fakeExt)
   }
 
   const installedNames = new Set(allThemes.map(t => t.name.toLowerCase()))
@@ -74,23 +119,100 @@ export default function SettingsTab() {
           <SectionHeader label="Color Theme" />
         </div>
 
-        {allThemes.map(t => {
-          const isActive = t.name === theme.name
+        {groupThemes(allThemes).map(({ key, themes: group, source: groupSource }) => {
+          const groupBuiltin = group.every(t => isBuiltin(t.name))
+          const installingGroup = group.some(t => installing === `${groupSource?.publisher}.${groupSource?.name}`)
           return (
+          <div key={key}>
+            {group.length > 1 && (
+              <div className="group/hdr flex items-center justify-between px-4 pt-3 pb-1 select-none">
+                <span className="text-[10px] font-semibold tracking-widest uppercase text-th-dim">
+                  {key}
+                </span>
+                {!groupBuiltin && (
+                  <div className="flex items-center gap-1.5 opacity-0 group-hover/hdr:opacity-100 transition-opacity">
+                    {groupSource && (
+                      <button
+                        title="Reinstall group"
+                        onClick={() => reinstallGroup(groupSource)}
+                        className="text-th-dim hover:text-th-accent transition-colors"
+                        disabled={installingGroup}
+                      >
+                        {installingGroup
+                          ? <Loader2 size={11} className="animate-spin" />
+                          : <RefreshCw size={11} />}
+                      </button>
+                    )}
+                    <button
+                      title="Remove group"
+                      onClick={() => group.forEach(t => removeTheme(t.name))}
+                      className="text-th-dim hover:text-th-err transition-colors"
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+            {group.map(t => {
+              const isActive = t.name === theme.name
+              const builtin = isBuiltin(t.name)
+              const label = group.length > 1
+                ? t.name.slice(key.length).trim() || t.name
+                : t.name
+              return (
+                <div
+                  key={t.name}
+                  className={`group flex items-center gap-2 w-full text-[13px] transition-colors border-l-2
+                    ${isActive
+                      ? 'border-l-th-accent bg-th-hover text-th-bright'
+                      : 'border-l-transparent bg-transparent text-th-text hover:bg-th-hover hover:text-th-bright'}`}
+                  style={{ padding: '5px 8px 5px', paddingLeft: group.length > 1 ? '24px' : '16px' }}
+                >
+                  <button
+                    onClick={() => setTheme(t)}
+                    className="flex items-center gap-2.5 flex-1 min-w-0 text-left"
+                  >
+                    <span className="shrink-0 w-[10px] h-[10px] rounded-sm" style={{ background: t.tabAccent }} />
+                    <span className="truncate">{label}</span>
+                  </button>
+                  {!builtin && (
+                    <button
+                      title="Remove theme"
+                      onClick={() => removeTheme(t.name)}
+                      className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-th-dim hover:text-th-err"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )})}
+
+        <div className="px-4 pt-4 pb-4 border-t border-t-th-border mt-2">
+          <SectionHeader label="Queries Directory" />
+          <div className="mt-2 flex flex-col gap-1.5">
+            <input
+              className="w-full h-7 px-2 text-[12px] rounded bg-th-bg border border-th-border text-th-text outline-none focus:border-th-accent font-mono"
+              value={dirInput}
+              onChange={e => setDirInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') saveDir() }}
+              spellCheck={false}
+            />
             <button
-              key={t.name}
-              onClick={() => setTheme(t)}
-              className={`flex items-center gap-2.5 w-full text-left text-[13px] transition-colors py-[7px] pl-4 pr-3 border-l-2
-                ${isActive
-                  ? 'border-l-th-accent bg-th-hover text-th-bright'
-                  : 'border-l-transparent bg-transparent text-th-text hover:bg-th-hover hover:text-th-bright'}`}
+              onClick={saveDir}
+              disabled={dirSaving || dirInput.trim() === queriesDir}
+              className="self-start h-[26px] px-3 text-[12px] rounded border border-th-accent text-th-accent hover:bg-th-accent hover:text-th-bright transition-colors disabled:opacity-40 disabled:cursor-default"
             >
-              {/* dynamic per-theme color — must stay inline */}
-              <span className="shrink-0 w-[10px] h-[10px] rounded-sm" style={{ background: t.tabAccent }} />
-              <span className="truncate">{t.name}</span>
+              {dirSaving ? 'Saving…' : 'Set'}
             </button>
-          )
-        })}
+            {dirError && (
+              <p className="text-[11px] text-th-err">{dirError}</p>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* ── Right: marketplace ── */}
@@ -152,6 +274,30 @@ export default function SettingsTab() {
   )
 }
 
+/* ── Helpers ── */
+
+interface ThemeGroup {
+  key: string
+  themes: Theme[]
+  source?: Theme['source'] // shared source if all themes in group have the same
+}
+
+function groupThemes(themes: Theme[]): ThemeGroup[] {
+  const map = new Map<string, Theme[]>()
+  for (const t of themes) {
+    const key = t.name.split(/[\s\-–—]/)[0]
+    const arr = map.get(key) ?? []
+    arr.push(t)
+    map.set(key, arr)
+  }
+  return Array.from(map.entries()).map(([key, themes]) => {
+    const src = themes[0]?.source
+    const sharedSource = src && themes.every(t => t.source?.name === src.name && t.source?.publisher === src.publisher)
+      ? src : undefined
+    return { key, themes, source: sharedSource }
+  })
+}
+
 /* ── Sub-components ── */
 
 function SectionHeader({ label }: { label: string }) {
@@ -187,21 +333,18 @@ function ResultRow({ ext, isInstalling, isInstalled, onInstall }: ResultRowProps
         )}
       </div>
 
-      {/* Install button */}
+      {/* Install / Reinstall button */}
       <button
         onClick={onInstall}
-        disabled={isInstalling || isInstalled}
+        disabled={isInstalling}
         className={`shrink-0 flex items-center gap-1.5 rounded h-[26px] px-[10px] text-[12px] transition-colors
-          ${isInstalled || isInstalling ? 'cursor-default' : 'cursor-pointer'}
-          ${isInstalled
-            ? 'text-th-dim bg-transparent border-0'
-            : `text-th-accent bg-transparent border border-th-accent ${!isInstalling ? 'hover:bg-th-accent hover:text-th-bright' : ''}`
-          }`}
+          ${isInstalling ? 'cursor-default opacity-60' : 'cursor-pointer'}
+          text-th-accent bg-transparent border border-th-accent hover:bg-th-accent hover:text-th-bright`}
       >
         {isInstalling
           ? <><Loader2 size={11} className="animate-spin" /> Installing</>
           : isInstalled
-          ? <><Check size={11} /> Installed</>
+          ? <><RefreshCw size={11} /> Reinstall</>
           : <><Download size={11} /> Install</>}
       </button>
     </div>
