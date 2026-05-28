@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* Surface */
+  --bg:           #1e1e1e;
+  --sidebar-bg:   #252526;
+  --activity-bg:  #333333;
+  --tab-active:   #1e1e1e;
+  --tab-inactive: #2d2d2d;
+
+  /* Accent */
+  --tab-accent:   #007acc;
+  --statusbar:    #007acc;
+
+  /* Border */
+  --border:       #3c3c3c;
+
+  /* Text */
+  --text:         #cccccc;
+  --text-dim:     #858585;
+  --text-bright:  #ffffff;
+
+  /* State */
+  --hover:        #2a2d2e;
+  --selection:    #264f78;
+
+  /* Semantic */
+  --error-bg:     #3c1515;
+  --error-text:   #f87171;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  height: 100vh;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+#root {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #424242;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+::-webkit-scrollbar-thumb:hover { background: #5a5a5a; }
+
+/* Text selection in editor */
+textarea::selection { background: var(--selection); }
