@@ -16,6 +16,11 @@ zip = "2"
 bytes = "1"
 tokio = { version = "1", features = ["full"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+sqlparser = "0.53"
+chrono = { version = "0.4", features = ["clock"] }
+
+[dev-dependencies]
+tempfile = "3"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
