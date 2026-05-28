@@ -1,7 +1,9 @@
 export interface Tab {
   id: number
   title: string
+  filePath: string
   content: string
+  isDirty: boolean
 }
 
 export interface TabsState {
@@ -9,10 +11,10 @@ export interface TabsState {
   activeId: number
 }
 
-export function openTab(state: TabsState, id: number): TabsState {
+export function openTab(state: TabsState, id: number, filePath: string): TabsState {
   const n = state.tabs.length + 1
   return {
-    tabs: [...state.tabs, { id, title: `Query ${n}`, content: '' }],
+    tabs: [...state.tabs, { id, title: `Query ${n}`, filePath, content: '', isDirty: false }],
     activeId: id,
   }
 }
@@ -30,10 +32,21 @@ export function closeTab(state: TabsState, id: number): TabsState {
 export function updateContent(state: TabsState, id: number, content: string): TabsState {
   return {
     ...state,
-    tabs: state.tabs.map(t => t.id === id ? { ...t, content } : t),
+    tabs: state.tabs.map(t => t.id === id ? { ...t, content, isDirty: true } : t),
   }
 }
 
-export function initialState(): TabsState {
-  return { tabs: [{ id: 1, title: 'Query 1', content: '' }], activeId: 1 }
+export function markClean(state: TabsState, id: number): TabsState {
+  return {
+    ...state,
+    tabs: state.tabs.map(t => t.id === id ? { ...t, isDirty: false } : t),
+  }
+}
+
+// filePath defaults to a temp path so existing tests don't need to supply it
+export function initialState(filePath = '/tmp/Query 1.sql'): TabsState {
+  return {
+    tabs: [{ id: 1, title: 'Query 1', filePath, content: '', isDirty: false }],
+    activeId: 1,
+  }
 }
