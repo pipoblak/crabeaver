@@ -1,0 +1,14 @@
+mod app;
+mod application;
+mod domain;
+mod infrastructure;
+mod ui;
+
+fn main() -> eframe::Result {
+    let options = eframe::NativeOptions::default();
+    eframe::run_native(
+        "db_ide",
+        options,
+        Box::new(|_cc| Ok(Box::new(app::App))),
+    )
+}
