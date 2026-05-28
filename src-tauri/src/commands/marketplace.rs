@@ -235,3 +235,113 @@ fn parse_vscode_theme(json: &Value) -> Option<ParsedTheme> {
         hover,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn dracula_json() -> Value {
+        json!({
+            "name": "Dracula",
+            "type": "dark",
+            "colors": {
+                "editor.background": "#282a36",
+                "editor.foreground": "#f8f8f2",
+                "sideBar.background": "#21222c",
+                "activityBar.background": "#191a21",
+                "tab.activeBackground": "#282a36",
+                "tab.inactiveBackground": "#21222c",
+                "tab.activeBorderTop": "#bd93f9",
+                "sideBar.border": "#44475a",
+                "tab.inactiveForeground": "#6272a4",
+                "tab.activeForeground": "#f8f8f2",
+                "statusBar.background": "#6272a4",
+                "list.hoverBackground": "#44475a"
+            }
+        })
+    }
+
+    #[test]
+    fn parse_dark_theme_maps_all_fields() {
+        let theme = parse_vscode_theme(&dracula_json()).unwrap();
+        assert_eq!(theme.name, "Dracula");
+        assert_eq!(theme.bg, "#282a36");
+        assert_eq!(theme.text, "#f8f8f2");
+        assert_eq!(theme.sidebar_bg, "#21222c");
+        assert_eq!(theme.tab_accent, "#bd93f9");
+        assert_eq!(theme.statusbar, "#6272a4");
+    }
+
+    #[test]
+    fn parse_returns_none_when_colors_missing() {
+        let json = json!({ "name": "Bad", "type": "dark" });
+        assert!(parse_vscode_theme(&json).is_none());
+    }
+
+    #[test]
+    fn parse_light_theme_uses_light_fallbacks() {
+        let json = json!({
+            "name": "Light",
+            "type": "light",
+            "colors": {}
+        });
+        let theme = parse_vscode_theme(&json).unwrap();
+        assert_eq!(theme.bg, "#ffffff");
+        assert_eq!(theme.text, "#333333");
+    }
+
+    #[test]
+    fn parse_dark_theme_uses_dark_fallbacks() {
+        let json = json!({
+            "name": "Dark Minimal",
+            "type": "dark",
+            "colors": {}
+        });
+        let theme = parse_vscode_theme(&json).unwrap();
+        assert_eq!(theme.bg, "#1e1e1e");
+        assert_eq!(theme.text, "#cccccc");
+        assert_eq!(theme.tab_accent, "#007acc");
+    }
+
+    #[test]
+    fn tab_accent_falls_back_to_focus_border() {
+        let json = json!({
+            "name": "T",
+            "type": "dark",
+            "colors": { "focusBorder": "#ff0000" }
+        });
+        let theme = parse_vscode_theme(&json).unwrap();
+        assert_eq!(theme.tab_accent, "#ff0000");
+    }
+
+    #[test]
+    fn sidebar_bg_falls_back_to_bg() {
+        let json = json!({
+            "name": "T",
+            "type": "dark",
+            "colors": { "editor.background": "#123456" }
+        });
+        let theme = parse_vscode_theme(&json).unwrap();
+        assert_eq!(theme.sidebar_bg, "#123456");
+    }
+
+    #[test]
+    fn border_falls_back_to_panel_border_then_default() {
+        let json_panel = json!({
+            "name": "T", "type": "dark",
+            "colors": { "panel.border": "#aabbcc" }
+        });
+        assert_eq!(parse_vscode_theme(&json_panel).unwrap().border, "#aabbcc");
+
+        let json_none = json!({ "name": "T", "type": "dark", "colors": {} });
+        assert_eq!(parse_vscode_theme(&json_none).unwrap().border, "#3c3c3c");
+    }
+
+    #[test]
+    fn unknown_name_falls_back_to_unknown_theme() {
+        let json = json!({ "type": "dark", "colors": {} });
+        let theme = parse_vscode_theme(&json).unwrap();
+        assert_eq!(theme.name, "Unknown Theme");
+    }
+}
