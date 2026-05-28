@@ -200,6 +200,12 @@ mod tests {
 
         let count = fs::read_dir(&history_dir).unwrap().count();
         assert_eq!(count, 50);
+
+        // oldest two pre-filled entries (0000.sql, 0001.sql) should be gone
+        assert!(!history_dir.join("0000.sql").exists(), "oldest snapshot should be deleted");
+        assert!(!history_dir.join("0001.sql").exists(), "second oldest should be deleted");
+        // newer entry should survive
+        assert!(history_dir.join("0002.sql").exists(), "newer snapshots should be kept");
     }
 
     #[test]
