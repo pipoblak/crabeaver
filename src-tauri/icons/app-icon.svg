@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f111a"/>
+      <stop offset="100%" stop-color="#1a1f35"/>
+    </linearGradient>
+    <linearGradient id="db-top" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#0ea5e9"/>
+    </linearGradient>
+    <linearGradient id="db-body" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0ea5e9"/>
+      <stop offset="100%" stop-color="#0369a1"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background rounded square -->
+  <rect width="512" height="512" rx="110" fill="url(#bg)"/>
+
+  <!-- ── CRAB LEGS (behind body) ── -->
+  <!-- Left legs -->
+  <line x1="178" y1="318" x2="108" y2="400" stroke="#f97316" stroke-width="22" stroke-linecap="round"/>
+  <line x1="195" y1="338" x2="140" y2="432" stroke="#f97316" stroke-width="20" stroke-linecap="round"/>
+  <!-- Right legs -->
+  <line x1="334" y1="318" x2="404" y2="400" stroke="#f97316" stroke-width="22" stroke-linecap="round"/>
+  <line x1="317" y1="338" x2="372" y2="432" stroke="#f97316" stroke-width="20" stroke-linecap="round"/>
+
+  <!-- ── LEFT CLAW ── -->
+  <path d="M 168 268 Q 90 240 72 290 Q 56 338 106 332 Q 136 328 158 302"
+        fill="none" stroke="#f97316" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Claw pincer top -->
+  <path d="M 72 290 Q 52 262 74 248 Q 94 236 106 260"
+        fill="none" stroke="#f97316" stroke-width="24" stroke-linecap="round"/>
+  <!-- Claw pincer bottom -->
+  <path d="M 72 290 Q 48 305 62 328 Q 76 348 104 332"
+        fill="none" stroke="#f97316" stroke-width="24" stroke-linecap="round"/>
+
+  <!-- ── RIGHT CLAW ── -->
+  <path d="M 344 268 Q 422 240 440 290 Q 456 338 406 332 Q 376 328 354 302"
+        fill="none" stroke="#f97316" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Claw pincer top -->
+  <path d="M 440 290 Q 460 262 438 248 Q 418 236 406 260"
+        fill="none" stroke="#f97316" stroke-width="24" stroke-linecap="round"/>
+  <!-- Claw pincer bottom -->
+  <path d="M 440 290 Q 464 305 450 328 Q 436 348 408 332"
+        fill="none" stroke="#f97316" stroke-width="24" stroke-linecap="round"/>
+
+  <!-- ── DATABASE BODY ── -->
+  <!-- DB tier 3 (bottom shadow) -->
+  <ellipse cx="256" cy="345" rx="108" ry="28" fill="#0c4a6e" opacity="0.7"/>
+
+  <!-- DB cylinder body -->
+  <rect x="148" y="222" width="216" height="123" fill="url(#db-body)"/>
+
+  <!-- DB tier lines (middle) -->
+  <ellipse cx="256" cy="272" rx="108" ry="26" fill="#0284c7"/>
+  <ellipse cx="256" cy="272" rx="108" ry="14" fill="#0ea5e9" opacity="0.5"/>
+
+  <!-- DB top cap -->
+  <ellipse cx="256" cy="222" rx="108" ry="28" fill="url(#db-top)"/>
+  <!-- Top cap highlight -->
+  <ellipse cx="256" cy="218" rx="72" ry="14" fill="#7dd3fc" opacity="0.35"/>
+
+  <!-- DB bottom cap -->
+  <ellipse cx="256" cy="345" rx="108" ry="28" fill="#0369a1"/>
+
+  <!-- ── EYES (on top of body) ── -->
+  <!-- Eye stalks -->
+  <rect x="210" y="172" width="18" height="38" rx="9" fill="#f97316"/>
+  <rect x="284" y="172" width="18" height="38" rx="9" fill="#f97316"/>
+  <!-- Eye balls -->
+  <circle cx="219" cy="166" r="22" fill="#f8fafc"/>
+  <circle cx="293" cy="166" r="22" fill="#f8fafc"/>
+  <!-- Pupils -->
+  <circle cx="223" cy="168" r="11" fill="#0f172a"/>
+  <circle cx="297" cy="168" r="11" fill="#0f172a"/>
+  <!-- Eye shine -->
+  <circle cx="218" cy="162" r="4" fill="#f8fafc"/>
+  <circle cx="292" cy="162" r="4" fill="#f8fafc"/>
+
+  <!-- ── ANTENNAE ── -->
+  <path d="M 219 146 Q 200 110 178 88" fill="none" stroke="#f97316" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="174" cy="84" r="10" fill="#fb923c"/>
+  <path d="M 293 146 Q 312 110 334 88" fill="none" stroke="#f97316" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="338" cy="84" r="10" fill="#fb923c"/>
+</svg>

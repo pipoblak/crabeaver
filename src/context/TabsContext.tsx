@@ -27,17 +27,22 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
 
   const openQueryTab = useCallback(() => {
     const id = nextId++
-    const n = tabs.length + 1
-    setTabs(prev => [...prev, { id, title: `Query ${n}`, content: '' }])
+    // derive count inside updater to avoid stale closure
+    setTabs(prev => {
+      const n = prev.length + 1
+      return [...prev, { id, title: `Query ${n}`, content: '' }]
+    })
     setActiveId(id)
-  }, [tabs])
+  }, [])
 
   const closeTab = useCallback((id: number) => {
     setTabs(prev => {
       if (prev.length <= 1) return prev
       const idx = prev.findIndex(t => t.id === id)
       const next = prev.filter(t => t.id !== id)
-      if (id === activeId) setActiveId(next[Math.min(idx, next.length - 1)].id)
+      // compute new active outside updater, then set separately
+      const newActive = next[Math.min(idx, next.length - 1)]
+      if (id === activeId && newActive) setActiveId(newActive.id)
       return next
     })
   }, [activeId])

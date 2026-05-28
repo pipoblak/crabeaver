@@ -19,22 +19,19 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     async function init() {
-      try {
-        const [savedThemes, activeName] = await Promise.all([
-          invoke<Theme[]>('get_themes'),
-          invoke<string | null>('get_setting', { key: 'active_theme' }),
-        ])
-        setInstalledThemes(savedThemes)
+      // Fetch independently so a missing active_theme key doesn't drop installed themes
+      let savedThemes: Theme[] = []
+      let activeName: string | null = null
 
-        const all = [...builtinThemes, ...savedThemes]
-        const active = all.find(t => t.name === activeName) ?? builtinThemes[0]
-        applyTheme(active)
-        setThemeState(active)
-      } catch {
-        applyTheme(builtinThemes[0])
-      } finally {
-        setReady(true)
-      }
+      try { savedThemes = await invoke<Theme[]>('get_themes') } catch { /* ok */ }
+      try { activeName = await invoke<string | null>('get_setting', { key: 'active_theme' }) } catch { /* ok */ }
+
+      setInstalledThemes(savedThemes)
+      const all = [...builtinThemes, ...savedThemes]
+      const active = all.find(t => t.name === activeName) ?? builtinThemes[0]
+      applyTheme(active)
+      setThemeState(active)
+      setReady(true)
     }
     init()
   }, [])

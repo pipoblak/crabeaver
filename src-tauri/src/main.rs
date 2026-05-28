@@ -1,5 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    db_ide_lib::run();
+    crabeaver_lib::run();
 }

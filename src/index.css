@@ -1,6 +1,26 @@
 @import "tailwindcss";
 
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+@theme {
+  --color-th-bg:          var(--bg);
+  --color-th-sidebar:     var(--sidebar-bg);
+  --color-th-activity:    var(--activity-bg);
+  --color-th-tab-active:  var(--tab-active);
+  --color-th-tab-inactive:var(--tab-inactive);
+  --color-th-accent:      var(--tab-accent);
+  --color-th-border:      var(--border);
+  --color-th-text:        var(--text);
+  --color-th-dim:         var(--text-dim);
+  --color-th-bright:      var(--text-bright);
+  --color-th-statusbar:   var(--statusbar);
+  --color-th-hover:       var(--hover);
+  --color-th-err-bg:      var(--error-bg);
+  --color-th-err:         var(--error-text);
+  --font-editor: 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
+}
+
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+}
 
 :root {
   /* Surface */

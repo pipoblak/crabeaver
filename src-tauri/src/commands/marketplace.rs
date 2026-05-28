@@ -39,7 +39,7 @@ pub async fn search_marketplace(query: String) -> Result<Vec<MarketplaceExtensio
             "criteria": [
                 {"filterType": 8, "value": "Microsoft.VisualStudio.Code"},
                 {"filterType": 10, "value": query},
-                {"filterType": 12, "value": "5000"}
+                {"filterType": 5, "value": "Themes"}
             ],
             "pageNumber": 1,
             "pageSize": 20,
@@ -54,7 +54,7 @@ pub async fn search_marketplace(query: String) -> Result<Vec<MarketplaceExtensio
         .post("https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery")
         .header("Content-Type", "application/json")
         .header("Accept", "application/json;api-version=7.1-preview.1")
-        .header("User-Agent", "db_ide/0.1.0")
+        .header("User-Agent", "crabeaver/0.1.0")
         .json(&body)
         .send()
         .await
@@ -78,7 +78,15 @@ pub async fn search_marketplace(query: String) -> Result<Vec<MarketplaceExtensio
                 .unwrap_or("")
                 .to_string();
 
-            if !publisher.is_empty() && !name.is_empty() && !version.is_empty() {
+            // Double-check categories contain "Themes"
+            let is_theme = ext["categories"]
+                .as_array()
+                .map(|cats| cats.iter().any(|c| {
+                    c.as_str().unwrap_or("").eq_ignore_ascii_case("themes")
+                }))
+                .unwrap_or(false);
+
+            if is_theme && !publisher.is_empty() && !name.is_empty() && !version.is_empty() {
                 results.push(MarketplaceExtension {
                     publisher,
                     name,

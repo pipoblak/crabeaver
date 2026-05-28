@@ -16,7 +16,7 @@ pub fn run() {
             let app_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&app_dir)?;
 
-            let db_path = app_dir.join("db_ide.db");
+            let db_path = app_dir.join("crabeaver.db");
             let db_url = format!("sqlite:{}", db_path.display());
 
             let pool = tauri::async_runtime::block_on(async {
