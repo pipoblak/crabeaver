@@ -160,6 +160,15 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
     }
     const tab = tabsRef.current.find(t => t.id === id)
     if (!tab || tab.title === newTitle || !newTitle.trim()) return
+    // Flush pending unsaved content before renaming
+    if (tab.filePath && tab.isDirty) {
+      try {
+        await invoke('write_query_file', { path: tab.filePath, content: tab.content })
+        setTabs(prev => prev.map(t => t.id === id ? { ...t, isDirty: false } : t))
+      } catch {
+        // Non-fatal: proceed with rename even if flush fails
+      }
+    }
     const dir = tab.filePath.substring(0, tab.filePath.lastIndexOf('/'))
     const newPath = `${dir}/${newTitle}.sql`
     try {

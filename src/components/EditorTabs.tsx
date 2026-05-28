@@ -60,7 +60,7 @@ export default function EditorTabs() {
                   onChange={e => setEditTitle(e.target.value)}
                   onBlur={commitRename}
                   onKeyDown={e => {
-                    if (e.key === 'Enter') commitRename()
+                    if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() }
                     if (e.key === 'Escape') setEditingId(null)
                   }}
                   onClick={e => e.stopPropagation()}
