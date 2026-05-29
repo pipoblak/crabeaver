@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::{Cursor, Read};
 
+use crate::commands::settings::TokenRule;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MarketplaceExtension {
     pub publisher: String,
@@ -28,6 +30,7 @@ pub struct ParsedTheme {
     pub text_bright: String,
     pub statusbar: String,
     pub hover: String,
+    pub token_rules: Vec<TokenRule>,
 }
 
 #[tauri::command]
@@ -47,7 +50,7 @@ pub async fn search_marketplace(query: String) -> Result<Vec<MarketplaceExtensio
             "sortOrder": 0
         }],
         "assetTypes": [],
-        "flags": 512
+        "flags": 516
     });
 
     let resp = client
@@ -218,22 +221,58 @@ fn parse_vscode_theme(json: &Value) -> Option<ParsedTheme> {
     let hover = get("list.hoverBackground", &sidebar_bg);
 
     let name = json["name"].as_str().unwrap_or("Unknown Theme").to_string();
+    let token_rules = extract_token_rules(json);
 
     Some(ParsedTheme {
-        name,
-        bg,
-        sidebar_bg,
-        activity_bg,
-        tab_active,
-        tab_inactive,
-        tab_accent,
-        border,
-        text,
-        text_dim,
-        text_bright,
-        statusbar,
-        hover,
+        name, bg, sidebar_bg, activity_bg, tab_active, tab_inactive,
+        tab_accent, border, text, text_dim, text_bright, statusbar, hover,
+        token_rules,
     })
+}
+
+fn extract_token_rules(json: &Value) -> Vec<TokenRule> {
+    let Some(arr) = json.get("tokenColors").and_then(|v| v.as_array()) else {
+        return vec![];
+    };
+
+    let mut rules = Vec::new();
+    for entry in arr {
+        let settings = &entry["settings"];
+        let foreground = settings["foreground"].as_str()
+            .map(|s| s.trim_start_matches('#').to_string());
+        let font_style = settings["fontStyle"].as_str()
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty());
+
+        if foreground.is_none() && font_style.is_none() {
+            continue;
+        }
+
+        let push = |rules: &mut Vec<TokenRule>, token: &str| {
+            rules.push(TokenRule {
+                token: token.to_string(),
+                foreground: foreground.clone(),
+                font_style: font_style.clone(),
+            });
+        };
+
+        match &entry["scope"] {
+            Value::String(s) => {
+                for scope in s.split(',') {
+                    push(&mut rules, scope.trim());
+                }
+            }
+            Value::Array(scopes) => {
+                for scope in scopes {
+                    if let Some(s) = scope.as_str() {
+                        push(&mut rules, s.trim());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    rules
 }
 
 #[cfg(test)]

@@ -4,6 +4,14 @@ use tauri::State;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct TokenRule {
+    pub token: String,
+    pub foreground: Option<String>,
+    pub font_style: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct Theme {
     pub name: String,
     pub bg: String,
@@ -18,6 +26,8 @@ pub struct Theme {
     pub text_bright: String,
     pub statusbar: String,
     pub hover: String,
+    #[serde(default)]
+    pub token_rules: Vec<TokenRule>,
 }
 
 #[tauri::command]

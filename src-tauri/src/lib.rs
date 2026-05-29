@@ -10,7 +10,7 @@ use commands::queries::{
 };
 use commands::settings::{delete_theme, get_setting, get_themes, save_theme, set_setting};
 use commands::sql_completion::get_sql_completions;
-use commands::sql_validation::validate_sql;
+use commands::sql_validation::{validate_sql, validate_sql_batch};
 use infrastructure::database::AppState;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
 use std::str::FromStr;
@@ -49,6 +49,7 @@ pub fn run() {
             delete_theme,
             get_sql_completions,
             validate_sql,
+            validate_sql_batch,
             get_queries_dir,
             set_queries_dir,
             list_query_files,

@@ -3,11 +3,14 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
 import { ThemeProvider } from '@/context/ThemeContext'
+import { ValidationProvider } from '@/context/ValidationContext'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ThemeProvider>
-      <App />
+      <ValidationProvider>
+        <App />
+      </ValidationProvider>
     </ThemeProvider>
   </StrictMode>,
 )
