@@ -16,18 +16,23 @@ function splitStatements(lines: string[]): Statement[] {
   const stmts: Statement[] = []
   let current: string[] = []
   let currentStart = 0
+  let prevEndedWithSemi = false
 
-  for (let i = 0; i < lines.length; i++) {
-    if (i > 0 && isStatementStart(lines[i]) && current.length) {
+  const flush = (nextStart: number) => {
+    if (current.length) {
       stmts.push({ start: currentStart, text: current.join('\n'), lineCount: current.length })
       current = []
-      currentStart = i
+      currentStart = nextStart
     }
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim()
+    if (i > 0 && (isStatementStart(lines[i]) || prevEndedWithSemi)) flush(i)
     current.push(lines[i])
+    prevEndedWithSemi = trimmed.endsWith(';')
   }
-  if (current.length) {
-    stmts.push({ start: currentStart, text: current.join('\n'), lineCount: current.length })
-  }
+  flush(lines.length)
   return stmts
 }
 

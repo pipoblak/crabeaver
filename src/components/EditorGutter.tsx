@@ -9,6 +9,8 @@ interface Props {
   value: string
 }
 
+const STMT_KEYWORDS = /^(SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|TRUNCATE|WITH|MERGE|CALL|EXPLAIN)\b/i
+
 const GUTTER_W   = 60
 const FOLD_W     = 16
 const NUM_W      = 28
@@ -118,12 +120,13 @@ export default function EditorGutter({ editor, monaco, workerApi, value }: Props
     const isFoldable = stmt && stmt.lineCount > 1
     const collapsed  = collapsedLines.has(ln)
 
-    // Scope bar style — continuous left border with top/bottom corners
-    const isActiveStmt = inStmt !== undefined && lineToStmt.get(cursorLine) === inStmt
+    // Only show scope for actual SQL statements (starts with keyword)
+    const isSqlStmt = inStmt ? STMT_KEYWORDS.test(inStmt.text.trimStart()) : false
+    const isActiveStmt = isSqlStmt && lineToStmt.get(cursorLine) === inStmt
     const barColor   = isActiveStmt ? 'var(--tab-accent)' : SCOPE_COLOR
     const barOpacity = isActiveStmt ? 0.55 : SCOPE_OPACITY
     let scopeStyle: React.CSSProperties = {}
-    if (inStmt && inStmt.lineCount > 1) {
+    if (isSqlStmt && inStmt && inStmt.lineCount > 1) {
       const start = inStmt.start + 1
       const end   = start + inStmt.lineCount - 1
       const isFirst = ln === start
@@ -138,7 +141,7 @@ export default function EditorGutter({ editor, monaco, workerApi, value }: Props
         margin:       isFirst ? '6px 2px 0' : isLast ? '0 2px 6px' : '0 2px',
         alignSelf: 'stretch',
       }
-    } else if (inStmt && inStmt.lineCount === 1) {
+    } else if (isSqlStmt && inStmt && inStmt.lineCount === 1) {
       scopeStyle = {
         borderLeft: `1px solid ${barColor}`,
         opacity:    barOpacity,
