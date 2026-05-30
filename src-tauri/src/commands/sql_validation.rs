@@ -1,7 +1,11 @@
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use sqlparser::ast::{ObjectName, Query, TableFactor, Visit, Visitor};
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::{Parser, ParserError};
+use std::collections::{HashMap, HashSet};
+use std::ops::ControlFlow;
+use std::sync::{OnceLock, RwLock};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SqlDiagnostic {
@@ -91,10 +95,129 @@ pub struct StatementInput {
     pub sql: String,
 }
 
+// ── Schema index (for table-existence warnings) ─────────────────────────────
+// Primed once per connection via `set_schema_index`; consulted by
+// `validate_sql_batch` to flag table names absent from the live schema.
+
+#[derive(Default)]
+struct SchemaIndex {
+    /// "schema.table" — lowercased
+    qualified: HashSet<String>,
+    /// bare "table" across all schemas — lowercased
+    bare: HashSet<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SchemaTable {
+    pub schema: String,
+    pub name: String,
+}
+
+fn schema_registry() -> &'static RwLock<HashMap<String, SchemaIndex>> {
+    static REG: OnceLock<RwLock<HashMap<String, SchemaIndex>>> = OnceLock::new();
+    REG.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// Store the table list for a connection so validation can flag unknown tables.
+/// `key` is an opaque frontend-chosen id (e.g. "connectionId:database").
+#[tauri::command]
+pub fn set_schema_index(key: String, tables: Vec<SchemaTable>) {
+    let mut idx = SchemaIndex::default();
+    for t in &tables {
+        let s = t.schema.to_lowercase();
+        let n = t.name.to_lowercase();
+        idx.qualified.insert(format!("{s}.{n}"));
+        idx.bare.insert(n);
+    }
+    if let Ok(mut reg) = schema_registry().write() {
+        reg.insert(key, idx);
+    }
+}
+
+/// Walks parsed statements, flagging table references not present in the index.
+/// CTE names and table-valued functions are excluded to avoid false positives.
+struct TableChecker<'a> {
+    idx: &'a SchemaIndex,
+    ctes: HashSet<String>,
+    start_line: u32,
+    diags: Vec<SqlDiagnostic>,
+}
+
+impl<'a> Visitor for TableChecker<'a> {
+    type Break = ();
+
+    fn pre_visit_query(&mut self, query: &Query) -> ControlFlow<()> {
+        if let Some(with) = &query.with {
+            for cte in &with.cte_tables {
+                self.ctes.insert(cte.alias.name.value.to_lowercase());
+            }
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn pre_visit_table_factor(&mut self, tf: &TableFactor) -> ControlFlow<()> {
+        if let TableFactor::Table { name, args, .. } = tf {
+            // `args.is_some()` ⇒ table-valued function (unnest, generate_series, …) — skip.
+            if args.is_none() {
+                self.check_relation(name);
+            }
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+impl<'a> TableChecker<'a> {
+    fn check_relation(&mut self, name: &ObjectName) {
+        let parts = &name.0;
+        if parts.is_empty() { return; }
+
+        let table = parts[parts.len() - 1].value.to_lowercase();
+        // CTE reference — always valid.
+        if self.ctes.contains(&table) { return; }
+
+        let (found, display) = if parts.len() == 1 {
+            (self.idx.bare.contains(&table), table.clone())
+        } else {
+            let schema = parts[parts.len() - 2].value.to_lowercase();
+            let display = format!(
+                "{}.{}",
+                parts[parts.len() - 2].value,
+                parts[parts.len() - 1].value
+            );
+            (self.idx.qualified.contains(&format!("{schema}.{table}")), display)
+        };
+
+        if found { return; }
+
+        let last = &parts[parts.len() - 1];
+        let line = self.start_line + last.span.start.line as u32;
+        let col = last.span.start.column as u32;
+        let len = last.value.chars().count() as u32;
+        self.diags.push(SqlDiagnostic {
+            line,
+            column: col,
+            end_column: col + len.max(1),
+            message: format!("Table \"{display}\" not found in schema"),
+            severity: "warning".into(),
+        });
+    }
+}
+
 /// Validate many statements in one IPC call — rayon parallelises across CPU cores.
 /// start_line is 0-indexed; returned diagnostics have 1-indexed line in the whole file.
 #[tauri::command]
-pub fn validate_sql_batch(statements: Vec<StatementInput>) -> Vec<SqlDiagnostic> {
+pub fn validate_sql_batch(
+    statements: Vec<StatementInput>,
+    schema_key: Option<String>,
+) -> Vec<SqlDiagnostic> {
+    // Hold a read guard for the whole parallel pass; the borrowed index is
+    // shared read-only across rayon workers.
+    let reg = schema_registry().read().ok();
+    let idx: Option<&SchemaIndex> = reg
+        .as_ref()
+        .zip(schema_key.as_ref())
+        .and_then(|(reg, key)| reg.get(key));
+
     statements
         .into_par_iter()
         .flat_map(|stmt| {
@@ -103,7 +226,19 @@ pub fn validate_sql_batch(statements: Vec<StatementInput>) -> Vec<SqlDiagnostic>
 
             let dialect = GenericDialect {};
             match Parser::parse_sql(&dialect, &trimmed) {
-                Ok(_) => vec![],
+                Ok(ast) => match idx {
+                    Some(idx) => {
+                        let mut checker = TableChecker {
+                            idx,
+                            ctes: HashSet::new(),
+                            start_line: stmt.start_line,
+                            diags: Vec::new(),
+                        };
+                        let _ = ast.visit(&mut checker);
+                        checker.diags
+                    }
+                    None => vec![],
+                },
                 Err(e) => {
                     let mut d = diagnostic_from_error(&trimmed, e);
                     // start_line is 0-indexed → add to 1-indexed d.line
@@ -310,6 +445,64 @@ mod tests {
         let diags = validate_sql("SELECT * FROM banking.sell WHERE a = a a".into());
         eprintln!("diags: {:?}", diags);
         assert!(!diags.is_empty(), "should report error for trailing token");
+    }
+
+    fn check_tables(sql: &str, tables: &[(&str, &str)]) -> Vec<SqlDiagnostic> {
+        let mut idx = SchemaIndex::default();
+        for (s, t) in tables {
+            idx.qualified.insert(format!("{}.{}", s.to_lowercase(), t.to_lowercase()));
+            idx.bare.insert(t.to_lowercase());
+        }
+        let ast = Parser::parse_sql(&GenericDialect {}, sql).unwrap();
+        let mut c = TableChecker { idx: &idx, ctes: HashSet::new(), start_line: 0, diags: vec![] };
+        let _ = ast.visit(&mut c);
+        c.diags
+    }
+
+    #[test]
+    fn known_table_no_warning() {
+        assert!(check_tables("SELECT * FROM users", &[("public", "users")]).is_empty());
+    }
+
+    #[test]
+    fn unknown_table_warns() {
+        let d = check_tables("SELECT * FROM bankking", &[("public", "banking")]);
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].severity, "warning");
+        assert!(d[0].message.contains("bankking"));
+    }
+
+    #[test]
+    fn qualified_table_checked() {
+        assert!(check_tables("SELECT * FROM banking.sell", &[("banking", "sell")]).is_empty());
+        assert_eq!(check_tables("SELECT * FROM banking.nope", &[("banking", "sell")]).len(), 1);
+    }
+
+    #[test]
+    fn cte_not_flagged() {
+        let sql = "WITH t AS (SELECT 1) SELECT * FROM t";
+        assert!(check_tables(sql, &[("public", "users")]).is_empty());
+    }
+
+    #[test]
+    fn table_function_not_flagged() {
+        assert!(check_tables("SELECT * FROM generate_series(1, 10)", &[("public", "users")]).is_empty());
+    }
+
+    #[test]
+    fn alias_not_flagged() {
+        // alias `u` must not be treated as a table
+        assert!(check_tables("SELECT u.id FROM users u", &[("public", "users")]).is_empty());
+    }
+
+    #[test]
+    fn join_unknown_table_warns() {
+        let d = check_tables(
+            "SELECT * FROM users u JOIN nope n ON n.id = u.id",
+            &[("public", "users")],
+        );
+        assert_eq!(d.len(), 1);
+        assert!(d[0].message.contains("nope"));
     }
 
     #[test]

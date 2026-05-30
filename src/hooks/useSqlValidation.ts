@@ -19,16 +19,20 @@ interface CacheEntry {
   diagnostics: SqlDiagnostic[]
 }
 
-const CHUNK_SIZE       = 10_000
-const PARALLEL_BATCHES = 4
-const CHUNK_DELAY      = 50
+const CHUNK_SIZE       = 250   // statements per IPC batch — bounds Rust parse load
+const PARALLEL_BATCHES = 4     // batches per round (≤1000 stmts in flight)
+const CHUNK_DELAY      = 50    // ms yield between rounds — keeps UI responsive
 
 export function useSqlValidation(
   monaco: typeof monaco_t | null,
   editorRef: React.RefObject<monaco_t.editor.IStandaloneCodeEditor | null>,
   editorReady: boolean,
+  schemaKey: string | null,
 ) {
   const { setState, setResults } = useValidation()
+  // Latest schema key, read at invoke time so dirty-detection caching survives key changes.
+  const schemaKeyRef = useRef(schemaKey)
+  schemaKeyRef.current = schemaKey
   const cache        = useRef(new Map<number, CacheEntry>())
   const prevLines    = useRef<string[]>([])
   const decorations  = useRef<monaco_t.editor.IEditorDecorationsCollection | null>(null)
@@ -43,13 +47,18 @@ export function useSqlValidation(
     return () => { w.terminate(); workerRef.current = null }
   }, [])
 
-  const worker = () => workerRef.current!
+  const worker = () => workerRef.current
 
   // ── Apply cached diagnostics to Monaco ──────────────────────────────────
   const applyAll = useCallback(() => {
     const editor = editorRef.current
     const model  = editor?.getModel()
     if (!editor || !model || !monaco) return
+
+    // Clamp all line refs to the current model — stale cache entries (e.g. after
+    // the doc shrank) could otherwise push a line past the end, and getLineMaxColumn
+    // throws on out-of-range input, which would silently kill every later applyAll.
+    const maxLine = model.getLineCount()
 
     const all: SqlDiagnostic[] = []
     cache.current.forEach(e => all.push(...e.diagnostics))
@@ -59,19 +68,22 @@ export function useSqlValidation(
       all.filter(d => d.severity === 'warning').length,
     )
 
-    monaco.editor.setModelMarkers(model, 'sql-validation', all.map(d => ({
-      startLineNumber: d.line, startColumn: d.column,
-      endLineNumber:   d.line, endColumn: Math.max(d.end_column, d.column + 1),
-      message: d.message,
-      severity: d.severity === 'error' ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
-    })))
+    monaco.editor.setModelMarkers(model, 'sql-validation', all.map(d => {
+      const line = Math.min(d.line, maxLine)
+      return {
+        startLineNumber: line, startColumn: d.column,
+        endLineNumber:   line, endColumn: Math.max(d.end_column, d.column + 1),
+        message: d.message,
+        severity: d.severity === 'error' ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
+      }
+    }))
 
     const decs: monaco_t.editor.IModelDeltaDecoration[] = []
     cache.current.forEach((entry, startLine) => {
       if (!entry.diagnostics.length) return
       const cls = entry.diagnostics.some(d => d.severity === 'error') ? 'sql-error-line' : 'sql-warning-line'
-      const s = startLine + 1
-      const e = startLine + entry.lineCount
+      const s = Math.min(startLine + 1, maxLine)
+      const e = Math.min(startLine + entry.lineCount, maxLine)
       decs.push({
         range: new monaco.Range(s, 1, e, model.getLineMaxColumn(e) || 1),
         options: { isWholeLine: true, className: cls },
@@ -98,7 +110,7 @@ export function useSqlValidation(
 
     let results: SqlDiagnostic[] = []
     try {
-      results = await invoke<SqlDiagnostic[]>('validate_sql_batch', { statements: input })
+      results = await invoke<SqlDiagnostic[]>('validate_sql_batch', { statements: input, schemaKey: schemaKeyRef.current })
     } catch (e) {
       console.error('[sql-validation] batch failed:', e)
       return
@@ -122,10 +134,11 @@ export function useSqlValidation(
     const editor = editorRef.current
     if (!editor) return
     const ranges = editor.getVisibleRanges()
-    if (!ranges.length) return
-    const first = ranges[0].startLineNumber
-    const last  = ranges[ranges.length - 1].endLineNumber
-    const stmts = await worker().getViewportStatements(lines, first, last)
+    // Fallback to first 60 lines when editor hasn't rendered yet (initial mount)
+    const first = ranges.length ? ranges[0].startLineNumber : 1
+    const last  = ranges.length ? ranges[ranges.length - 1].endLineNumber : Math.min(60, lines.length)
+    const w1 = worker(); if (!w1) return
+    const stmts = await w1.getViewportStatements(lines, first, last)
     await validateBatch(stmts)
     applyAll()
   }, [editorRef, validateBatch, applyAll])
@@ -134,7 +147,8 @@ export function useSqlValidation(
   const runFullScan = useCallback(async (lines: string[]) => {
     scanAbort.current = false
     setState('scanning')
-    const stmts = await worker().splitStatements(lines)
+    const w2 = worker(); if (!w2) return
+    const stmts = await w2.splitStatements(lines)
 
     for (let i = 0; i < stmts.length; i += CHUNK_SIZE * PARALLEL_BATCHES) {
       if (scanAbort.current) break
@@ -152,7 +166,7 @@ export function useSqlValidation(
     if (!scanAbort.current) setState('done')
   }, [validateBatch, applyAll, setState])
 
-  // ── Scroll listener — viewport validation only, no full scan ────────────
+  // ── Scroll listener — validate new viewport area using cache ─────────────
   useEffect(() => {
     if (!editorReady) return
     const editor = editorRef.current
@@ -162,11 +176,11 @@ export function useSqlValidation(
     const d = editor.onDidScrollChange(() => {
       if (viewportDebounce.current) clearTimeout(viewportDebounce.current)
       viewportDebounce.current = setTimeout(() => {
-        validateViewport(valueRef.current.split('\n'))
-      }, 300)
+        const lines = valueRef.current.split('\n')
+        validateViewport(lines)
+      }, 200)
     })
 
-    // Keep valueRef current
     const d2 = editor.onDidChangeModelContent(() => {
       valueRef.current = editor.getValue()
     })
@@ -174,23 +188,29 @@ export function useSqlValidation(
     return () => { d.dispose(); d2.dispose() }
   }, [editorReady, editorRef, validateViewport])
 
-  // ── Main: react to value changes (typing) — viewport only ───────────────
+  // ── Full scan timer — fires 2s after typing stops ─────────────────────────
+  const fullScanTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // ── Main: react to value changes ──────────────────────────────────────────
   const validate = useCallback(async (value: string, isReset: boolean) => {
     const lines = value.split('\n')
 
     if (isReset) {
-      // On open: clear cache, do viewport first, then full scan background
       scanAbort.current = true
       cache.current.clear()
       prevLines.current = []
       await validateViewport(lines)
-      runFullScan(lines) // background, non-blocking
+      runFullScan(lines)
       return
     }
 
-    // On typing: clear dirty lines immediately, then validate viewport
-    const stmts = await worker().splitStatements(prevLines.current)
-    const dirtyStarts = await worker().getDirtyStatements(prevLines.current, lines, stmts)
+    // Worker initialises async — skip dirty detection if not ready yet
+    if (!worker()) { prevLines.current = lines; return }
+
+    // Clear dirty lines immediately so errors vanish while typing
+    const w3 = worker(); if (!w3) return
+    const stmts = await w3.splitStatements(prevLines.current)
+    const dirtyStarts = await w3.getDirtyStatements(prevLines.current, lines, stmts)
     if (dirtyStarts.length > 0) {
       for (const start of dirtyStarts) {
         const stmt = stmts.find(s => s.start === start)
@@ -201,14 +221,31 @@ export function useSqlValidation(
 
     prevLines.current = lines
 
+    // Validate viewport quickly
     if (viewportDebounce.current) clearTimeout(viewportDebounce.current)
-    viewportDebounce.current = setTimeout(() => validateViewport(lines), 800)
+    viewportDebounce.current = setTimeout(() => validateViewport(lines), 400)
+
+    // Full scan 2s after typing stops — catches errors outside viewport
+    if (fullScanTimer.current) clearTimeout(fullScanTimer.current)
+    fullScanTimer.current = setTimeout(() => runFullScan(lines), 2000)
   }, [validateViewport, runFullScan, applyAll])
 
   const resetCache = useCallback(() => {
     scanAbort.current = true
     cache.current.clear()
   }, [])
+
+  // Re-validate when the schema index changes — statements cached as clean
+  // before the schema loaded must be re-checked against the new table set.
+  useEffect(() => {
+    if (!editorReady) return
+    const editor = editorRef.current
+    if (!editor) return
+    cache.current.clear()
+    const lines = editor.getValue().split('\n')
+    validateViewport(lines)
+    runFullScan(lines)
+  }, [schemaKey, editorReady, editorRef, validateViewport, runFullScan])
 
   return { validate, resetCache }
 }

@@ -20,7 +20,9 @@ function splitStatements(lines: string[]): Statement[] {
 
   const flush = (nextStart: number) => {
     if (current.length) {
-      stmts.push({ start: currentStart, text: current.join('\n'), lineCount: current.length })
+      while (current.length > 0 && current[current.length - 1].trim() === '') current.pop()
+      if (current.length > 0)
+        stmts.push({ start: currentStart, text: current.join('\n'), lineCount: current.length })
       current = []
       currentStart = nextStart
     }

@@ -119,16 +119,17 @@ export default function ThemesSection() {
                 return (
                   <div
                     key={t.name}
-                    className={`group flex items-center gap-2 w-full text-[13px] transition-colors border-l-2
+                    onClick={() => setTheme(t)}
+                    className={`group flex items-center gap-2 w-full text-[13px] transition-colors border-l-2 cursor-pointer
                       ${isActive ? 'border-l-th-accent bg-th-hover text-th-bright' : 'border-l-transparent text-th-text hover:bg-th-hover hover:text-th-bright'}`}
                     style={{ padding: '5px 8px 5px', paddingLeft: group.length > 1 ? 24 : 16 }}
                   >
-                    <button onClick={() => setTheme(t)} className="flex items-center gap-2.5 flex-1 min-w-0 text-left">
-                      <span className="shrink-0 w-[10px] h-[10px] rounded-sm" style={{ background: t.tabAccent }} />
-                      <span className="truncate">{label}</span>
-                    </button>
+                    <span className="shrink-0 w-[10px] h-[10px] rounded-sm" style={{ background: t.tabAccent }} />
+                    <span className="truncate flex-1">{label}</span>
                     {!builtin && (
-                      <button title="Remove" onClick={() => removeTheme(t.name)} className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-th-dim hover:text-th-err">
+                      <button title="Remove"
+                        onClick={e => { e.stopPropagation(); removeTheme(t.name) }}
+                        className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-th-dim hover:text-th-err">
                         <Trash2 size={11} />
                       </button>
                     )}

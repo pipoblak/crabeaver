@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Palette, Code2, Database, Info, ChevronRight } from 'lucide-react'
 import ThemesSection from '@/components/settings/ThemesSection'
+import ConnectionsSection from '@/components/settings/ConnectionsSection'
 
 type Section = 'themes' | 'editor' | 'connections' | 'about'
 
@@ -11,8 +12,8 @@ const SECTIONS = [
   { id: 'about'       as Section, label: 'About',        icon: Info,     },
 ]
 
-export default function SettingsTab() {
-  const [active, setActive] = useState<Section>('themes')
+export default function SettingsTab({ initialSection, initialConnectionId }: { initialSection?: string; initialConnectionId?: string }) {
+  const [active, setActive] = useState<Section>((initialSection as Section) ?? 'themes')
 
   return (
     <div className="flex h-full overflow-hidden bg-th-bg">
@@ -59,7 +60,8 @@ export default function SettingsTab() {
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         {active === 'themes'      && <ThemesSection />}
         {active === 'editor'      && <EditorSection />}
-        {active === 'connections' && <ConnectionsSection />}
+        {active === 'connections' && <ConnectionsSection initialConnectionId={initialConnectionId} />}
+        {/* Stubs below */}
         {active === 'about'       && <AboutSection />}
       </div>
     </div>
@@ -99,19 +101,6 @@ function EditorSection() {
   )
 }
 
-function ConnectionsSection() {
-  return (
-    <SectionShell title="Connections">
-      <div style={{ padding: '16px', color: 'var(--text-dim)', fontSize: 13 }}>
-        Manage your database connections here.
-        <br /><br />
-        <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>
-          PostgreSQL, MySQL, SQLite support coming soon.
-        </span>
-      </div>
-    </SectionShell>
-  )
-}
 
 function AboutSection() {
   return (

@@ -22,11 +22,23 @@ enum SqlContext {
     InsertInto,
     Values,
     Set,        // UPDATE SET
+    CreateTable,
+    AlterTable,
+    DropTable,
+    Update,
+    DeleteFrom,
+    With,
+    SetOp,
     Unknown,
 }
 
 fn detect_context(sql: &str, cursor_offset: usize) -> SqlContext {
-    let text = sql[..cursor_offset.min(sql.len())].to_uppercase();
+    let up_to_cursor = &sql[..cursor_offset.min(sql.len())];
+
+    // Scope to the current statement only — find the last `;` before the cursor
+    // so keywords from previous statements don't pollute context detection.
+    let stmt_start = up_to_cursor.rfind(';').map(|p| p + 1).unwrap_or(0);
+    let text = up_to_cursor[stmt_start..].to_uppercase();
 
     // Strip string literals to avoid false keyword matches inside quotes
     let mut clean = String::with_capacity(text.len());
@@ -41,26 +53,66 @@ fn detect_context(sql: &str, cursor_offset: usize) -> SqlContext {
         }
     }
 
-    // Find the latest-positioned context keyword
+    // Strip paren content so inner subquery keywords (FROM, ORDER BY in OVER, etc.)
+    // cannot override the outer query's context (CONTEXT-1 fix).
+    let mut paren_clean = String::with_capacity(clean.len());
+    let mut depth: i32 = 0;
+    for ch in clean.chars() {
+        match ch {
+            '(' => { depth += 1; paren_clean.push('('); }
+            ')' => { depth -= 1; if depth < 0 { depth = 0; } paren_clean.push(')'); }
+            _   => { if depth > 0 { paren_clean.push(' '); } else { paren_clean.push(ch); } }
+        }
+    }
+    let clean = paren_clean;
+
+    // Find the latest-positioned context keyword.
+    // Multi-word compounds first — they share end-position with their suffix words,
+    // so they must be checked first (first match at same position wins).
     let markers: &[(&str, SqlContext)] = &[
-        ("ORDER BY",   SqlContext::OrderBy),
-        ("GROUP BY",   SqlContext::GroupBy),
-        ("INSERT INTO", SqlContext::InsertInto),
-        ("FULL OUTER JOIN", SqlContext::Join),
-        ("LEFT OUTER JOIN", SqlContext::Join),
-        ("RIGHT OUTER JOIN", SqlContext::Join),
-        ("LEFT JOIN",  SqlContext::Join),
-        ("RIGHT JOIN", SqlContext::Join),
-        ("INNER JOIN", SqlContext::Join),
-        ("CROSS JOIN", SqlContext::Join),
-        ("JOIN",       SqlContext::Join),
-        ("VALUES",     SqlContext::Values),
-        ("HAVING",     SqlContext::Having),
-        ("WHERE",      SqlContext::Where),
-        ("FROM",       SqlContext::From),
-        ("SELECT",     SqlContext::Select),
-        (" ON ",       SqlContext::On),
-        (" SET ",      SqlContext::Set),
+        // Most-specific compound markers first
+        ("ORDER BY",              SqlContext::OrderBy),
+        ("GROUP BY",              SqlContext::GroupBy),
+        ("INSERT INTO",           SqlContext::InsertInto),
+        ("DELETE FROM",           SqlContext::DeleteFrom),
+        ("CREATE TABLE",          SqlContext::CreateTable),
+        ("DROP TABLE",            SqlContext::DropTable),
+        ("ALTER TABLE",           SqlContext::AlterTable),
+        // CONTEXT-3: CREATE INDEX ON must win over bare ' ON '
+        ("CREATE UNIQUE INDEX ON",SqlContext::Unknown),
+        ("CREATE UNIQUE INDEX",   SqlContext::Unknown),
+        ("CREATE INDEX ON",       SqlContext::Unknown),
+        ("CREATE INDEX",          SqlContext::Unknown),
+        // CONTEXT-2: FOR UPDATE must win over bare UPDATE
+        ("FOR UPDATE",            SqlContext::Select),
+        ("FOR SHARE",             SqlContext::Select),
+        // SETOP-1: set operators need their own context
+        ("UNION ALL",             SqlContext::SetOp),
+        ("UNION",                 SqlContext::SetOp),
+        ("INTERSECT",             SqlContext::SetOp),
+        ("EXCEPT",                SqlContext::SetOp),
+        // ON CONFLICT must win over bare ' ON '
+        ("ON CONFLICT",           SqlContext::InsertInto),
+        // Join variants
+        ("FULL OUTER JOIN",       SqlContext::Join),
+        ("LEFT OUTER JOIN",       SqlContext::Join),
+        ("RIGHT OUTER JOIN",      SqlContext::Join),
+        ("LEFT JOIN",             SqlContext::Join),
+        ("RIGHT JOIN",            SqlContext::Join),
+        ("INNER JOIN",            SqlContext::Join),
+        ("CROSS JOIN",            SqlContext::Join),
+        ("NATURAL JOIN",          SqlContext::Join),
+        // Single-word keywords
+        ("JOIN",                  SqlContext::Join),
+        ("VALUES",                SqlContext::Values),
+        ("HAVING",                SqlContext::Having),
+        ("WHERE",                 SqlContext::Where),
+        ("FROM",                  SqlContext::From),
+        (" UPDATE ",              SqlContext::Update),
+        ("WITH",                  SqlContext::With),
+        ("SELECT",                SqlContext::Select),
+        (" ON ",                  SqlContext::On),
+        (" SET ",                 SqlContext::Set),
     ];
 
     let mut latest_pos: Option<usize> = None;
@@ -83,6 +135,16 @@ fn kw(label: &str) -> SqlCompletion {
     SqlCompletion {
         label: label.to_string(),
         kind: "keyword".to_string(),
+        insert_text: label.to_string(),
+        detail: "keyword".to_string(),
+        documentation: None,
+    }
+}
+
+fn kw_s(label: &str) -> SqlCompletion {
+    SqlCompletion {
+        label: label.to_string(),
+        kind: "structural".to_string(),
         insert_text: label.to_string(),
         detail: "keyword".to_string(),
         documentation: None,
@@ -112,6 +174,18 @@ fn snip(label: &str, insert: &str, doc: &str) -> SqlCompletion {
 fn completions_for(ctx: SqlContext) -> Vec<SqlCompletion> {
     match ctx {
         SqlContext::Select => vec![
+            kw_s("FROM"),
+            kw_s("WHERE"),
+            kw_s("JOIN"),
+            kw_s("LEFT JOIN"),
+            kw_s("INNER JOIN"),
+            kw_s("GROUP BY"),
+            kw_s("ORDER BY"),
+            kw_s("HAVING"),
+            kw_s("LIMIT"),
+            kw_s("OFFSET"),
+            kw_s("UNION"),
+            kw_s("UNION ALL"),
             kw("*"),
             kw("DISTINCT"),
             kw("ALL"),
@@ -150,19 +224,32 @@ fn completions_for(ctx: SqlContext) -> Vec<SqlCompletion> {
             func("ABS",      "ABS(${1:col})",              "Absolute value"),
             func("FLOOR",    "FLOOR(${1:col})",            "Floor value"),
             func("CEIL",     "CEIL(${1:col})",             "Ceiling value"),
+            func("STRING_AGG",  "STRING_AGG(${1:col}, '${2:,}')",             "Aggregate strings with delimiter"),
+            func("ARRAY_AGG",   "ARRAY_AGG(${1:col} ORDER BY ${2:col})",      "Aggregate into array"),
+            func("JSONB_AGG",   "JSONB_AGG(${1:col})",                        "Aggregate into JSONB array"),
+            func("JSON_AGG",    "JSON_AGG(${1:col})",                         "Aggregate into JSON array"),
+            func("BOOL_AND",    "BOOL_AND(${1:col})",                         "True if all values are true"),
+            func("BOOL_OR",     "BOOL_OR(${1:col})",                          "True if any value is true"),
+            func("PERCENTILE_CONT", "PERCENTILE_CONT(${1:0.5}) WITHIN GROUP (ORDER BY ${2:col})", "Continuous percentile"),
+            func("PERCENTILE_DISC", "PERCENTILE_DISC(${1:0.5}) WITHIN GROUP (ORDER BY ${2:col})", "Discrete percentile"),
         ],
 
         SqlContext::From | SqlContext::Join => vec![
-            kw("JOIN"),
-            kw("LEFT JOIN"),
-            kw("RIGHT JOIN"),
-            kw("INNER JOIN"),
-            kw("FULL OUTER JOIN"),
-            kw("CROSS JOIN"),
-            kw("LEFT LATERAL JOIN"),
+            kw_s("WHERE"),
+            kw_s("JOIN"),
+            kw_s("LEFT JOIN"),
+            kw_s("RIGHT JOIN"),
+            kw_s("INNER JOIN"),
+            kw_s("FULL OUTER JOIN"),
+            kw_s("CROSS JOIN"),
+            kw_s("GROUP BY"),
+            kw_s("ORDER BY"),
+            kw_s("HAVING"),
+            kw_s("LIMIT"),
+            kw("AS"),
             kw("LATERAL"),
             kw("UNNEST"),
-            kw("AS"),
+            kw("LEFT LATERAL JOIN"),
             snip("subquery", "(SELECT ${1:*} FROM ${2:table}) AS ${3:sub}", "Inline subquery"),
         ],
 
@@ -219,6 +306,14 @@ fn completions_for(ctx: SqlContext) -> Vec<SqlCompletion> {
             snip("ON CONFLICT DO UPDATE", "ON CONFLICT (${1:col}) DO UPDATE SET ${2:col} = EXCLUDED.${2:col}", "Upsert"),
         ],
 
+        SqlContext::Values => vec![
+            snip("row", "(${1:val1}, ${2:val2})", "Value row"),
+            kw("DEFAULT"),
+            kw("NULL"),
+            kw("NOW()"),
+            kw("CURRENT_TIMESTAMP"),
+        ],
+
         SqlContext::Set => vec![
             kw("WHERE"),
             kw("RETURNING"),
@@ -226,30 +321,114 @@ fn completions_for(ctx: SqlContext) -> Vec<SqlCompletion> {
             snip("col = EXCLUDED.col", "${1:col} = EXCLUDED.${1:col}", "Set from excluded (upsert)"),
         ],
 
-        SqlContext::Unknown => all_keywords(),
+        SqlContext::CreateTable => vec![
+            kw_s("IF NOT EXISTS"),
+            snip("column list", "(${1:\n  id SERIAL PRIMARY KEY,\n  created_at TIMESTAMPTZ DEFAULT NOW()\n})", "Column definitions"),
+            kw("LIKE"),
+            kw("PARTITION BY RANGE"),
+            kw("PARTITION BY LIST"),
+            kw("PARTITION BY HASH"),
+        ],
 
-        _ => all_keywords(),
+        SqlContext::AlterTable => vec![
+            kw_s("ADD COLUMN"),
+            kw_s("DROP COLUMN"),
+            kw_s("RENAME TO"),
+            kw_s("RENAME COLUMN"),
+            kw_s("ALTER COLUMN"),
+            kw("ADD CONSTRAINT"),
+            kw("ADD PRIMARY KEY"),
+            kw("ADD FOREIGN KEY"),
+            kw("ADD UNIQUE"),
+            kw("SET DEFAULT"),
+            kw("DROP DEFAULT"),
+            kw("SET NOT NULL"),
+            kw("DROP NOT NULL"),
+            kw("ENABLE TRIGGER"),
+            kw("DISABLE TRIGGER"),
+            kw("ATTACH PARTITION"),
+            kw("DETACH PARTITION"),
+        ],
+
+        SqlContext::DropTable => vec![
+            kw_s("IF EXISTS"),
+            kw("CASCADE"),
+            kw("RESTRICT"),
+        ],
+
+        SqlContext::Update => vec![
+            kw_s("SET"),
+            kw("AS"),
+        ],
+
+        SqlContext::DeleteFrom => vec![
+            kw_s("WHERE"),
+            kw("USING"),
+            kw("RETURNING"),
+            kw("*"),
+        ],
+
+        SqlContext::With => vec![
+            snip("CTE", "${1:cte_name} AS (\n  SELECT ${2:*} FROM ${3:table}\n)", "Common Table Expression"),
+            kw("RECURSIVE"),
+        ],
+
+        SqlContext::SetOp => vec![
+            kw_s("SELECT"),
+            snip("SELECT *", "SELECT ${1:*} FROM ${2:table}", "Next branch of set operation"),
+        ],
+
+        SqlContext::Unknown => statement_starters(),
+
+        _ => statement_starters(),
     }
 }
 
-fn all_keywords() -> Vec<SqlCompletion> {
+fn statement_starters() -> Vec<SqlCompletion> {
     vec![
-        kw("SELECT"), kw("FROM"), kw("WHERE"), kw("JOIN"), kw("LEFT JOIN"),
-        kw("RIGHT JOIN"), kw("INNER JOIN"), kw("FULL OUTER JOIN"), kw("ON"),
-        kw("GROUP BY"), kw("ORDER BY"), kw("HAVING"), kw("LIMIT"), kw("OFFSET"),
-        kw("INSERT INTO"), kw("VALUES"), kw("UPDATE"), kw("SET"), kw("DELETE FROM"),
-        kw("CREATE TABLE"), kw("DROP TABLE"), kw("ALTER TABLE"), kw("TRUNCATE"),
-        kw("WITH"), kw("UNION"), kw("UNION ALL"), kw("INTERSECT"), kw("EXCEPT"),
-        kw("DISTINCT"), kw("AS"), kw("AND"), kw("OR"), kw("NOT"),
-        kw("IS NULL"), kw("IS NOT NULL"), kw("IN"), kw("LIKE"), kw("BETWEEN"),
-        kw("EXISTS"), kw("ASC"), kw("DESC"), kw("RETURNING"),
+        kw_s("SELECT"),
+        kw_s("INSERT INTO"),
+        kw_s("UPDATE"),
+        kw_s("DELETE FROM"),
+        kw_s("CREATE TABLE"),
+        kw_s("DROP TABLE"),
+        kw_s("ALTER TABLE"),
+        kw_s("TRUNCATE"),
+        kw_s("WITH"),
+        kw_s("EXPLAIN"),
+        kw_s("EXPLAIN ANALYZE"),
+        kw("BEGIN"),
+        kw("COMMIT"),
+        kw("ROLLBACK"),
+        kw("VACUUM"),
+        kw("ANALYZE"),
     ]
 }
 
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletionResult {
+    pub items:           Vec<SqlCompletion>,
+    pub suggest_tables:  bool,
+    pub suggest_columns: bool,
+}
+
 #[tauri::command]
-pub fn get_sql_completions(sql: String, cursor_offset: u32) -> Vec<SqlCompletion> {
+pub fn get_sql_completions(sql: String, cursor_offset: u32) -> CompletionResult {
     let ctx = detect_context(&sql, cursor_offset as usize);
-    completions_for(ctx)
+    let (suggest_tables, suggest_columns) = match ctx {
+        SqlContext::From | SqlContext::Join                         => (true, false),
+        SqlContext::InsertInto | SqlContext::AlterTable
+        | SqlContext::DropTable | SqlContext::Update
+        | SqlContext::DeleteFrom                                    => (true, false),
+        SqlContext::Select | SqlContext::Where | SqlContext::On
+        | SqlContext::Having | SqlContext::OrderBy
+        | SqlContext::GroupBy | SqlContext::Set                    => (false, true),
+        SqlContext::CreateTable | SqlContext::With
+        | SqlContext::Values | SqlContext::SetOp
+        | SqlContext::Unknown | _             => (false, false),
+    };
+    CompletionResult { items: completions_for(ctx), suggest_tables, suggest_columns }
 }
 
 #[cfg(test)]
@@ -302,24 +481,24 @@ mod tests {
     #[test]
     fn select_returns_aggregate_functions() {
         let completions = get_sql_completions("SELECT ".into(), 7);
-        assert!(completions.iter().any(|c| c.label == "COUNT"));
-        assert!(completions.iter().any(|c| c.label == "SUM"));
-        assert!(completions.iter().any(|c| c.label == "DISTINCT"));
+        assert!(completions.items.iter().any(|c| c.label == "COUNT"));
+        assert!(completions.items.iter().any(|c| c.label == "SUM"));
+        assert!(completions.items.iter().any(|c| c.label == "DISTINCT"));
     }
 
     #[test]
     fn where_returns_operators() {
         let completions = get_sql_completions("SELECT * FROM t WHERE ".into(), 22);
-        assert!(completions.iter().any(|c| c.label == "IS NULL"));
-        assert!(completions.iter().any(|c| c.label == "BETWEEN"));
-        assert!(completions.iter().any(|c| c.label == "ILIKE"));
+        assert!(completions.items.iter().any(|c| c.label == "IS NULL"));
+        assert!(completions.items.iter().any(|c| c.label == "BETWEEN"));
+        assert!(completions.items.iter().any(|c| c.label == "ILIKE"));
     }
 
     #[test]
     fn order_by_returns_asc_desc() {
         let completions = get_sql_completions("SELECT * FROM t ORDER BY id ".into(), 28);
-        assert!(completions.iter().any(|c| c.label == "ASC"));
-        assert!(completions.iter().any(|c| c.label == "DESC"));
-        assert!(completions.iter().any(|c| c.label == "NULLS LAST"));
+        assert!(completions.items.iter().any(|c| c.label == "ASC"));
+        assert!(completions.items.iter().any(|c| c.label == "DESC"));
+        assert!(completions.items.iter().any(|c| c.label == "NULLS LAST"));
     }
 }

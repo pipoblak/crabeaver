@@ -1,9 +1,16 @@
+export type TabType = 'query' | 'session-manager' | 'lock-manager' | 'table-details'
+
 export interface Tab {
-  id: number
-  title: string
-  filePath: string
-  content: string
-  isDirty: boolean
+  id:           number
+  title:        string
+  filePath:     string
+  content:      string
+  isDirty:      boolean
+  type?:        TabType
+  connectionId?: string
+  connectionName?: string
+  database?: string
+  queryLimit?: number   // undefined = use app default (1000); 0 = no limit
 }
 
 export interface TabsState {

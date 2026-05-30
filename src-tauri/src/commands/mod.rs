@@ -1,3 +1,6 @@
+pub mod biometric;
+pub mod table_details;
+pub mod connections;
 pub mod marketplace;
 pub mod queries;
 pub mod settings;

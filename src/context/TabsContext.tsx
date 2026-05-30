@@ -13,10 +13,14 @@ interface TabsContextValue {
   restored: boolean
   setActiveId: (id: number) => void
   openQueryTab: () => Promise<void>
+  openSpecialTab: (type: Tab['type'], title: string, extra?: Partial<Tab>) => void
   closeTab: (id: number) => void
   updateContent: (id: number, content: string) => void
   renameTab: (id: number, newTitle: string) => Promise<void>
   reloadTabs: () => Promise<void>
+  setTabConnection: (id: number, connectionId: string | undefined, connectionName: string | undefined) => void
+  setTabDatabase:    (id: number, database: string | undefined) => void
+  setTabQueryLimit:  (id: number, limit: number | undefined) => void
 }
 
 const TabsContext = createContext<TabsContextValue>(null!)
@@ -60,18 +64,48 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
         setTabs([{ id: 1, title: 'Query 1', filePath, content: '', isDirty: false }])
         setActiveIdState(1)
       } else {
-        const loadedTabs: Tab[] = await Promise.all(
-          files.map(async (f, i) => {
+        // Load tab connections map alongside file contents
+        const [loadedTabs, connMapRaw] = await Promise.all([
+          Promise.all(files.map(async (f, i) => {
             const id = i + 1
             const content = await invoke<string>('read_query_file', { path: f.path })
-            return { id, title: f.name, filePath: f.path, content, isDirty: false }
-          })
-        )
-        nextIdRef.current = loadedTabs.length + 1
-        setTabs(loadedTabs)
+            return { id, title: f.name, filePath: f.path, content, isDirty: false } as Tab
+          })),
+          invoke<string | null>('get_setting', { key: 'tab_query_connections' }).catch(() => null),
+        ])
+
+        const connMap: Record<string, { id: string; name: string; database?: string }> = connMapRaw
+          ? JSON.parse(connMapRaw)
+          : {}
+        const tabsWithConns = loadedTabs.map(t => ({
+          ...t,
+          connectionId:   connMap[t.title]?.id,
+          connectionName: connMap[t.title]?.name,
+          database:       connMap[t.title]?.database,
+        }))
+
+        // Also restore special tabs (session-manager, lock-manager, table-details)
+        const specialRaw = await invoke<string | null>('get_setting', { key: 'open_special_tabs' }).catch(() => null)
+        const specialMeta: Array<Partial<Tab> & { type: string }> = specialRaw ? JSON.parse(specialRaw) : []
+        let nextId = tabsWithConns.length + 1
+        const specialTabs: Tab[] = specialMeta.map(m => ({
+          id:          nextId++,
+          title:       m.title ?? '',
+          filePath:    '',
+          content:     '',
+          isDirty:     false,
+          type:        m.type as Tab['type'],
+          connectionId:   (m as any).connectionId,
+          connectionName: (m as any).connectionName,
+          ...(m as any),
+        }))
+
+        nextIdRef.current = nextId
+        const allTabs = [...tabsWithConns, ...specialTabs]
+        setTabs(allTabs)
 
         const activeFile = await invoke<string | null>('get_setting', { key: 'active_query_file' })
-        const activeTab = loadedTabs.find(t => t.title === activeFile) ?? loadedTabs[0]
+        const activeTab = allTabs.find(t => t.title === activeFile) ?? allTabs[0]
         setActiveIdState(activeTab.id)
       }
     } catch (e) {
@@ -112,22 +146,57 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
+  const persistSpecialTabs = (tabs: Tab[]) => {
+    const specials = tabs
+      .filter(t => t.type && t.type !== 'query')
+      .map(t => ({ ...t }))
+    invoke('set_setting', { key: 'open_special_tabs', value: JSON.stringify(specials) }).catch(() => {})
+  }
+
+  const openSpecialTab = useCallback((type: Tab['type'], title: string, extra?: Partial<Tab>) => {
+    const existing = tabsRef.current.find(t => {
+      if (t.type !== type) return false
+      if (t.connectionId !== (extra as any)?.connectionId) return false
+      if (type === 'table-details') {
+        return (t as any).schema === (extra as any)?.schema && (t as any).table === (extra as any)?.table
+      }
+      return true
+    })
+    if (existing) { setActiveIdState(existing.id); return }
+    const id = nextIdRef.current++
+    setTabs(prev => {
+      const next = [...prev, { id, title, filePath: '', content: '', isDirty: false, type, ...extra }]
+      persistSpecialTabs(next)
+      return next
+    })
+    setActiveIdState(id)
+  }, [])
+
   const closeTab = useCallback((id: number) => {
     const existing = saveTimers.current.get(id)
     if (existing) clearTimeout(existing)
     saveTimers.current.delete(id)
 
-    const current = tabsRef.current
-    if (current.length <= 1) return
-    const idx = current.findIndex(t => t.id === id)
-    const next = current.filter(t => t.id !== id)
-    setTabs(next)
-
-    if (id === activeIdRef.current) {
-      const newActive = next[Math.min(idx, next.length - 1)]
-      setActiveIdState(newActive.id)
-      invoke('set_setting', { key: 'active_query_file', value: newActive.title }).catch(() => {})
+    const tab = tabsRef.current.find(t => t.id === id)
+    // Delete the file so it doesn't reappear on next app launch
+    if (tab?.filePath && (!tab.type || tab.type === 'query')) {
+      invoke('delete_query_file', { path: tab.filePath }).catch(() => {})
     }
+
+    setTabs(prev => {
+      if (prev.length <= 1) return prev
+      const idx  = prev.findIndex(t => t.id === id)
+      const next = prev.filter(t => t.id !== id)
+      if (id === activeIdRef.current) {
+        const newActive = next[Math.min(idx, next.length - 1)]
+        if (newActive) {
+          setActiveIdState(newActive.id)
+          invoke('set_setting', { key: 'active_query_file', value: newActive.title }).catch(() => {})
+        }
+      }
+      persistSpecialTabs(next)
+      return next
+    })
   }, [])
 
   const updateContent = useCallback((id: number, content: string) => {
@@ -181,10 +250,40 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
+  const persistConnMap = (tabs: Tab[]) => {
+    const map: Record<string, { id: string; name: string; database?: string }> = {}
+    tabs.forEach(t => {
+      if (t.connectionId && t.connectionName)
+        map[t.title] = { id: t.connectionId, name: t.connectionName, database: t.database }
+    })
+    invoke('set_setting', { key: 'tab_query_connections', value: JSON.stringify(map) }).catch(() => {})
+  }
+
+  const setTabConnection = useCallback((id: number, connectionId: string | undefined, connectionName: string | undefined) => {
+    setTabs(prev => {
+      const updated = prev.map(t => t.id === id ? { ...t, connectionId, connectionName } : t)
+      persistConnMap(updated)
+      return updated
+    })
+  }, [])
+
+  const setTabDatabase = useCallback((id: number, database: string | undefined) => {
+    setTabs(prev => {
+      const updated = prev.map(t => t.id === id ? { ...t, database } : t)
+      persistConnMap(updated)
+      return updated
+    })
+  }, [])
+
+  const setTabQueryLimit = useCallback((id: number, limit: number | undefined) => {
+    setTabs(prev => prev.map(t => t.id === id ? { ...t, queryLimit: limit } : t))
+  }, [])
+
   return (
     <TabsContext.Provider value={{
       tabs, activeId, restored,
-      setActiveId, openQueryTab, closeTab, updateContent, renameTab, reloadTabs: loadTabs,
+      setActiveId, openQueryTab, openSpecialTab, closeTab, updateContent, renameTab, reloadTabs: loadTabs,
+      setTabConnection, setTabDatabase, setTabQueryLimit,
     }}>
       {children}
     </TabsContext.Provider>
