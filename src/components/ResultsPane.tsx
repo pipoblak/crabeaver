@@ -1,7 +1,7 @@
 import {
   useReactTable, getCoreRowModel,
-  getFilteredRowModel, flexRender,
-  type ColumnDef, type ColumnFiltersState,
+  getFilteredRowModel,
+  type ColumnDef,
 } from '@tanstack/react-table'
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { ChevronUp, ChevronDown, ChevronsUpDown, Loader2, XCircle, X, Edit2, Filter, Link } from 'lucide-react'

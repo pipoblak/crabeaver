@@ -108,7 +108,7 @@ export function useSqlValidation(
       sql: s.text.trim().replace(/;$/, '').trim(),
     }))
 
-    let results: SqlDiagnostic[] = []
+    let results: SqlDiagnostic[]
     try {
       results = await invoke<SqlDiagnostic[]>('validate_sql_batch', { statements: input, schemaKey: schemaKeyRef.current })
     } catch (e) {

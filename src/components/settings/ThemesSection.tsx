@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Search, Download, Check, Loader2, Trash2, RefreshCw } from 'lucide-react'
+import { Search, Download, Loader2, Trash2, RefreshCw } from 'lucide-react'
 import { useTheme } from '@/context/ThemeContext'
 import type { Theme } from '@/themes'
 
@@ -92,7 +92,7 @@ export default function ThemesSection() {
 
         {groupThemes(allThemes).map(({ key, themes: group, source: groupSource }) => {
           const groupBuiltin = group.every(t => isBuiltin(t.name))
-          const installingGroup = group.some(t => installing === `${groupSource?.publisher}.${groupSource?.name}`)
+          const installingGroup = group.some(() => installing === `${groupSource?.publisher}.${groupSource?.name}`)
           return (
             <div key={key}>
               {group.length > 1 && (

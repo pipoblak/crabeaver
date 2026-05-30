@@ -1,9 +1,9 @@
-import { useState, useCallback } from 'react'
+import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useConnections } from '@/context/ConnectionContext'
 import {
   Plus, ChevronRight, ChevronDown, Plug, PlugZap, Loader2, RefreshCw,
-  Table2, Database, FolderOpen, Folder, Settings, Server,
+  Table2, Database, FolderOpen, Folder, Settings,
   Shield,
 } from 'lucide-react'
 

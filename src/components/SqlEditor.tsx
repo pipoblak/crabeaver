@@ -1,5 +1,5 @@
 import Editor, { useMonaco } from '@monaco-editor/react'
-import { useCallback, useEffect, useImperativeHandle, useRef, useState, forwardRef } from 'react'
+import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useTheme } from '@/context/ThemeContext'
 import { useConnections } from '@/context/ConnectionContext'
