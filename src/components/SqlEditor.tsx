@@ -5,6 +5,7 @@ import { useTheme } from '@/context/ThemeContext'
 import { useConnections } from '@/context/ConnectionContext'
 import { useSqlValidation } from '@/hooks/useSqlValidation'
 import EditorGutter from '@/components/EditorGutter'
+import { loadScroll, saveScroll } from '@/lib/scroll'
 import type * as monaco_t from 'monaco-editor'
 
 interface SqlCompletion {
@@ -92,6 +93,8 @@ interface Props {
   connectionId?: string
   /** Driver of the active connection; selects the SQL dialect for lint/completion. */
   driver?: string
+  /** Stable per-query key (the file path) used to persist + restore scroll position. */
+  scrollKey?: string
   database?: string
   onSchemaStatus?: (status: { tables: number; error?: string; fkColumns?: Set<string>; fkRefs?: Map<string, { table: string; col: string }> } | null) => void
   onRunQuery?: (sql: string, newTab: boolean) => void
@@ -107,7 +110,7 @@ function isDark(hex: string): boolean {
 }
 
 const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
-  { value, onChange, connectionId, driver, database, onSchemaStatus, onRunQuery }, ref) {
+  { value, onChange, connectionId, driver, scrollKey, database, onSchemaStatus, onRunQuery }, ref) {
   const monaco = useMonaco()
   const { theme } = useTheme()
   const { markConnected } = useConnections()
@@ -575,6 +578,25 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
     validate(value, false)
   }, [value, editorReady, validate])
 
+  // ── Persist scroll position per query file ───────────────────────────────
+  // Saved (debounced) on scroll and flushed on unmount; restored in onMount above.
+  const scrollSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (!editorReady || !scrollKey) return
+    const editor = editorRef.current
+    if (!editor) return
+    const save = () => saveScroll(scrollKey, { top: editor.getScrollTop(), left: editor.getScrollLeft() })
+    const d = editor.onDidScrollChange(() => {
+      if (scrollSaveTimer.current) clearTimeout(scrollSaveTimer.current)
+      scrollSaveTimer.current = setTimeout(save, 150)
+    })
+    return () => {
+      d.dispose()
+      if (scrollSaveTimer.current) clearTimeout(scrollSaveTimer.current)
+      save() // flush latest position when switching away / closing
+    }
+  }, [editorReady, scrollKey])
+
   // ── SQL worker (statement splitting) ─────────────────────────────────────
   const stmtWorkerRef = useRef<import('comlink').Remote<import('../workers/sqlWorker').SqlWorkerApi> | null>(null)
   const stmtRawWorker = useRef<Worker | null>(null)
@@ -678,7 +700,18 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
             resetCache()
             isFirstLoad.current = true
             setEditorReady(true)
-            requestAnimationFrame(() => editor.layout())
+            requestAnimationFrame(() => {
+              editor.layout()
+              // Restore the saved scroll position for this query file (after layout,
+              // so the content height is known and setScrollTop isn't clamped to 0).
+              if (scrollKey) {
+                const pos = loadScroll(scrollKey)
+                if (pos) {
+                  editor.setScrollTop(pos.top)
+                  editor.setScrollLeft(pos.left)
+                }
+              }
+            })
 
             // Re-trigger suggestions on every content change — typing AND deletion.
             // Only trigger suggestions on specific characters that open new contexts.

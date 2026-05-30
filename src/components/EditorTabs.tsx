@@ -724,6 +724,7 @@ export default function EditorTabs() {
                 onChange={v => updateContent(active.id, v)}
                 connectionId={active.connectionId}
                 driver={connections.find(c => c.id === active.connectionId)?.driver}
+                scrollKey={active.filePath}
                 database={active.database}
                 onSchemaStatus={setSchemaStatus}
                 onRunQuery={(_sql, newTab) => runQuery(newTab)}
