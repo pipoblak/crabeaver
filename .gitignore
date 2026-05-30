@@ -9,6 +9,9 @@ dist/
 # Tauri
 src-tauri/gen/
 
+# Agent worktrees / local config
+.claude/
+
 # OS
 .DS_Store
 Thumbs.db
