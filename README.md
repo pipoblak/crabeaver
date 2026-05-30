@@ -184,8 +184,15 @@ AGENTS.md                  architecture rules + how-to-add-a-connector
 ## The name
 
 **Crab** 🦀 (Rust's mascot, Ferris) **+ beaver** 🦫 (nature's tireless engineer) =
-**Crabeaver** — a Rust-native database workbench, inspired by the SQL tools that came before it,
-built fresh from the ground up.
+**Crabeaver** — a Rust-native database workbench, inspired by **[DBeaver](https://dbeaver.io/)**
+and reimagined from the ground up around a pluggable, multi-engine core.
+
+## Acknowledgements
+
+Crabeaver is inspired by **[DBeaver](https://dbeaver.io/)** — the excellent open-source database
+tool that set the bar for what a desktop SQL workbench should feel like. Crabeaver is an
+independent project, not affiliated with or derived from DBeaver; it's a fresh, native take on
+the same idea, built on Rust and Tauri.
 
 ## License
 
