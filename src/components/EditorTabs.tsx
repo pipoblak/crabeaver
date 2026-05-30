@@ -9,7 +9,7 @@ import TableDetailsTab from '@/components/TableDetailsTab'
 import ResultsPane, { type QueryResult, type ResultTab } from '@/components/ResultsPane'
 import ResizeHandle from '@/components/ResizeHandle'
 
-interface Connection { id: string; name: string; database: string }
+interface Connection { id: string; name: string; driver: string; database: string }
 
 interface TabResults {
   tabs:     ResultTab[]
@@ -723,6 +723,7 @@ export default function EditorTabs() {
                 value={active.content}
                 onChange={v => updateContent(active.id, v)}
                 connectionId={active.connectionId}
+                driver={connections.find(c => c.id === active.connectionId)?.driver}
                 database={active.database}
                 onSchemaStatus={setSchemaStatus}
                 onRunQuery={(_sql, newTab) => runQuery(newTab)}

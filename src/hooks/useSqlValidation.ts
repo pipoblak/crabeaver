@@ -28,11 +28,15 @@ export function useSqlValidation(
   editorRef: React.RefObject<monaco_t.editor.IStandaloneCodeEditor | null>,
   editorReady: boolean,
   schemaKey: string | null,
+  dialect?: string,
 ) {
   const { setState, setResults } = useValidation()
   // Latest schema key, read at invoke time so dirty-detection caching survives key changes.
   const schemaKeyRef = useRef(schemaKey)
   schemaKeyRef.current = schemaKey
+  // Latest dialect (the connection's driver), read at invoke time.
+  const dialectRef = useRef(dialect)
+  dialectRef.current = dialect
   const cache        = useRef(new Map<number, CacheEntry>())
   const prevLines    = useRef<string[]>([])
   const decorations  = useRef<monaco_t.editor.IEditorDecorationsCollection | null>(null)
@@ -110,7 +114,7 @@ export function useSqlValidation(
 
     let results: SqlDiagnostic[]
     try {
-      results = await invoke<SqlDiagnostic[]>('validate_sql_batch', { statements: input, schemaKey: schemaKeyRef.current })
+      results = await invoke<SqlDiagnostic[]>('validate_sql_batch', { statements: input, schemaKey: schemaKeyRef.current, dialect: dialectRef.current })
     } catch (e) {
       console.error('[sql-validation] batch failed:', e)
       return

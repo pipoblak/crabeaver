@@ -90,6 +90,8 @@ interface Props {
   value: string
   onChange: (value: string) => void
   connectionId?: string
+  /** Driver of the active connection; selects the SQL dialect for lint/completion. */
+  driver?: string
   database?: string
   onSchemaStatus?: (status: { tables: number; error?: string; fkColumns?: Set<string>; fkRefs?: Map<string, { table: string; col: string }> } | null) => void
   onRunQuery?: (sql: string, newTab: boolean) => void
@@ -105,7 +107,7 @@ function isDark(hex: string): boolean {
 }
 
 const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
-  { value, onChange, connectionId, database, onSchemaStatus, onRunQuery }, ref) {
+  { value, onChange, connectionId, driver, database, onSchemaStatus, onRunQuery }, ref) {
   const monaco = useMonaco()
   const { theme } = useTheme()
   const { markConnected } = useConnections()
@@ -117,12 +119,16 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
   // Non-null only once the Rust schema index for this key is primed — used both
   // as the lookup key sent to validate_sql_batch and as the re-validate trigger.
   const [primedKey, setPrimedKey] = useState<string | null>(null)
-  const { validate, resetCache } = useSqlValidation(monaco, editorRef, editorReady, primedKey)
+  const { validate, resetCache } = useSqlValidation(monaco, editorRef, editorReady, primedKey, driver)
   const schemaCacheRef    = useRef<SchemaCache | null>(null)
 
   const monacoThemeName  = `crabeaver-${theme.name.replace(/[^a-z0-9]/gi, '-').toLowerCase()}`
   const onRunQueryRef    = useRef(onRunQuery)
   useEffect(() => { onRunQueryRef.current = onRunQuery }, [onRunQuery])
+  // Latest driver, read inside the (once-registered) completion provider so the
+  // dialect follows connection switches without re-registering the provider.
+  const driverRef        = useRef(driver)
+  useEffect(() => { driverRef.current = driver }, [driver])
 
   // ── Run query keyboard shortcuts ─────────────────────────────────────────
   // Registered after Monaco is ready so `monaco` is non-null.
@@ -293,10 +299,12 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
           endColumn:       word.endColumn,
         }
 
-        // Get keyword/function/snippet completions + schema flags from Rust
+        // Get keyword/function/snippet completions + schema flags from Rust,
+        // using the active connection's dialect.
         const result = await invoke<CompletionResult>('get_sql_completions', {
           sql,
           cursorOffset: offset,
+          dialect: driverRef.current,
         }).catch(() => ({ items: [], suggestTables: false, suggestColumns: false } as CompletionResult))
 
         const suggestions: monaco_t.languages.CompletionItem[] = []

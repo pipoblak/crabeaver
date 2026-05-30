@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useConnections } from '@/context/ConnectionContext'
+import { capabilitiesFor, descriptorFor } from '@/connectors/registry'
 import {
   Plus, ChevronRight, ChevronDown, Plug, PlugZap, Loader2, RefreshCw,
   Table2, Database, FolderOpen, Folder, Settings,
   Shield,
 } from 'lucide-react'
 
-interface Connection { id: string; name: string; host: string; port: number; database: string }
+interface Connection { id: string; name: string; driver: string; host: string; port: number; database: string }
 interface ColumnInfo  { name: string; typeName: string }
 interface TableInfo   { name: string; columns: ColumnInfo[] }
 interface SchemaInfo  { schema: string; tables: TableInfo[] }
@@ -24,8 +25,6 @@ interface ConnectionTree {
   databases:    { names: string[]; state: LoadState; error?: string }
   schemas:      Record<string, { data: SchemaInfo[]; state: LoadState; error?: string }>
 }
-
-const ADMIN_ITEMS = ['Sessions', 'Locks', 'Jobs']
 
 function StatusBar({ status }: { status: string }) {
   const [show, setShow] = useState(false)
@@ -268,6 +267,16 @@ export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
           const isLoad    = loading.has(c.id)
           const connExp   = isExpanded(c.id)
           const tree      = treeFor(c.id)
+          // Capability gating: only show server tools the connector actually has.
+          const caps      = capabilitiesFor(c.driver)
+          const descriptor = descriptorFor(c.driver)
+          const adminItems = [
+            caps.sessions ? 'Sessions' : null,
+            caps.locks    ? 'Locks'    : null,
+          ].filter(Boolean) as string[]
+          const subtitle  = descriptor.connectionKind === 'file'
+            ? (c.database.split('/').pop() || c.database)
+            : `${c.host}:${c.port}`
 
           return (
             <div key={c.id}>
@@ -282,7 +291,7 @@ export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
                 <span className="shrink-0 w-2 h-2 rounded-full" style={{ background: isConn ? '#22c55e' : 'var(--text-dim)' }} />
                 <div className="flex flex-col flex-1 min-w-0">
                   <span className="text-[13px] text-th-text truncate font-medium">{c.name}</span>
-                  <span className="text-[10px] text-th-dim truncate">{c.host}:{c.port}</span>
+                  <span className="text-[10px] text-th-dim truncate">{subtitle}</span>
                 </div>
                 <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button onClick={e => { e.stopPropagation(); openSettings?.('connections', c.id) }}
@@ -365,18 +374,22 @@ export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
                     </>
                   )}
 
-                  {/* Tools */}
-                  <Row depth={1} icon={<Shield size={11} />} label="Tools"
-                    expanded={isExpanded(`${c.id}/admin`)} onClick={() => toggle(`${c.id}/admin`)} />
-                  {isExpanded(`${c.id}/admin`) && ADMIN_ITEMS.map(item => (
-                    <Row key={item} depth={2} icon={<Folder size={10} />} label={item}
-                      onClick={
-                        item === 'Sessions' ? () => openTab?.('session-manager', `Sessions — ${c.name}`, { connectionId: c.id, connectionName: c.name })
-                        : item === 'Locks'  ? () => openTab?.('lock-manager',     `Locks — ${c.name}`,     { connectionId: c.id, connectionName: c.name })
-                        : undefined
-                      }
-                    />
-                  ))}
+                  {/* Tools — only shown when the connector supports any of them */}
+                  {adminItems.length > 0 && (
+                    <>
+                      <Row depth={1} icon={<Shield size={11} />} label="Tools"
+                        expanded={isExpanded(`${c.id}/admin`)} onClick={() => toggle(`${c.id}/admin`)} />
+                      {isExpanded(`${c.id}/admin`) && adminItems.map(item => (
+                        <Row key={item} depth={2} icon={<Folder size={10} />} label={item}
+                          onClick={
+                            item === 'Sessions' ? () => openTab?.('session-manager', `Sessions — ${c.name}`, { connectionId: c.id, connectionName: c.name })
+                            : item === 'Locks'  ? () => openTab?.('lock-manager',     `Locks — ${c.name}`,     { connectionId: c.id, connectionName: c.name })
+                            : undefined
+                          }
+                        />
+                      ))}
+                    </>
+                  )}
                 </>
               )}
             </div>

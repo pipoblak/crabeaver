@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useCallback, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 
-interface Connection { id: string; name: string; host: string; port: number; database: string }
+interface Connection { id: string; name: string; driver: string; host: string; port: number; database: string }
 
 interface ConnectionContextValue {
   connections:    Connection[]

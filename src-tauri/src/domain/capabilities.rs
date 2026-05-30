@@ -44,6 +44,15 @@ impl Driver {
             Driver::MySql    => Some(SqlDialect::MySql),
         }
     }
+
+    /// Whether connecting requires a password. File-based engines (SQLite) do not,
+    /// so the test/connect flow must not demand one for them.
+    pub fn requires_password(&self) -> bool {
+        match self {
+            Driver::Postgres | Driver::MySql => true,
+            Driver::Sqlite => false,
+        }
+    }
 }
 
 /// The SQL dialect a connector's language service should parse and complete with.

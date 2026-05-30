@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use uuid::Uuid;
 
+use crate::domain::capabilities::Driver;
 use crate::domain::error::DriverError;
 use crate::domain::models::connection::{Connection, ConnectionView};
 use crate::infrastructure::biometric;
@@ -115,10 +116,16 @@ pub async fn test(
     conn:     ConnectionView,
     password: Option<String>,
 ) -> Result<String, DriverError> {
-    let pwd = match password.filter(|p| !p.is_empty()) {
-        Some(p) => p,
-        None if !conn.id.is_empty() => keychain::load_password(&conn.id).map_err(DriverError::Auth)?,
-        _ => return Err(DriverError::Auth("Password is required".to_string())),
+    let driver_kind = Driver::parse(&conn.driver)?;
+    let pwd = if driver_kind.requires_password() {
+        match password.filter(|p| !p.is_empty()) {
+            Some(p) => p,
+            None if !conn.id.is_empty() => keychain::load_password(&conn.id).map_err(DriverError::Auth)?,
+            _ => return Err(DriverError::Auth("Password is required".to_string())),
+        }
+    } else {
+        // File-based engine (SQLite): no password needed.
+        password.unwrap_or_default()
     };
     let database = conn.database.clone();
     let driver = state.drivers.driver_for_str(&conn.driver)?;

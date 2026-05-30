@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Plus, Trash2, Plug, PlugZap, Loader2, CheckCircle, XCircle, Fingerprint } from 'lucide-react'
+import { CONNECTORS, descriptorFor } from '@/connectors/registry'
 
 interface Connection {
   id:         string
@@ -137,6 +138,7 @@ export default function ConnectionsSection({ initialConnectionId }: { initialCon
     setForm(prev => ({ ...prev, [k]: k === 'port' ? Number(e.target.value) : e.target.value }))
 
   const showForm = isNew || selected !== null
+  const isFileConn = descriptorFor(form.driver).connectionKind === 'file'
 
   return (
     <div className="flex h-full overflow-hidden relative">
@@ -195,41 +197,57 @@ export default function ConnectionsSection({ initialConnectionId }: { initialCon
               <Input value={form.name} onChange={f('name')} placeholder="My PostgreSQL" />
             </Field>
             <Field label="Driver">
-              <select value={form.driver} onChange={f('driver')} className="text-[13px] rounded px-2 py-1.5 outline-none w-full"
+              <select
+                value={form.driver}
+                onChange={e => {
+                  const driver = e.target.value
+                  const d = descriptorFor(driver)
+                  setForm(prev => ({ ...prev, driver, port: d.defaultPort ?? prev.port }))
+                }}
+                className="text-[13px] rounded px-2 py-1.5 outline-none w-full"
                 style={{ background: 'var(--sidebar-bg)', border: '1px solid var(--border)', color: 'var(--text)' }}>
-                <option value="postgres">PostgreSQL</option>
+                {CONNECTORS.map(c => <option key={c.driver} value={c.driver}>{c.label}</option>)}
               </select>
             </Field>
-            <div className="flex gap-3">
-              <Field label="Host" className="flex-1"><Input value={form.host} onChange={f('host')} placeholder="localhost" /></Field>
-              <Field label="Port" className="w-24"><Input value={form.port} onChange={f('port')} type="number" placeholder="5432" /></Field>
-            </div>
-            <Field label="Database"><Input value={form.database} onChange={f('database')} placeholder="mydb" /></Field>
-            <Field label="Username"><Input value={form.username} onChange={f('username')} placeholder="postgres" /></Field>
-            <Field
-              label={
-                !isNew && !pwdSaved
-                  ? 'Password — required, not saved yet'
-                  : 'Password'
-              }
-              className={!isNew && !pwdSaved ? 'password-required' : ''}
-            >
-              <Input
-                value={form.password}
-                onChange={f('password')}
-                type="password"
-                placeholder={isNew || !pwdSaved ? '••••••••' : 'leave blank to keep current'}
-                highlight={!isNew && !pwdSaved && !form.password}
-              />
-            </Field>
-            <Field label="SSL Mode">
-              <select value={form.sslMode} onChange={f('sslMode')} className="text-[13px] rounded px-2 py-1.5 outline-none w-full"
-                style={{ background: 'var(--sidebar-bg)', border: '1px solid var(--border)', color: 'var(--text)' }}>
-                <option value="disable">Disable</option>
-                <option value="prefer">Prefer</option>
-                <option value="require">Require</option>
-              </select>
-            </Field>
+
+            {isFileConn ? (
+              <Field label="Database file">
+                <Input value={form.database} onChange={f('database')} placeholder="/path/to/database.sqlite" />
+              </Field>
+            ) : (
+              <>
+                <div className="flex gap-3">
+                  <Field label="Host" className="flex-1"><Input value={form.host} onChange={f('host')} placeholder="localhost" /></Field>
+                  <Field label="Port" className="w-24"><Input value={form.port} onChange={f('port')} type="number" placeholder="5432" /></Field>
+                </div>
+                <Field label="Database"><Input value={form.database} onChange={f('database')} placeholder="mydb" /></Field>
+                <Field label="Username"><Input value={form.username} onChange={f('username')} placeholder="postgres" /></Field>
+                <Field
+                  label={
+                    !isNew && !pwdSaved
+                      ? 'Password — required, not saved yet'
+                      : 'Password'
+                  }
+                  className={!isNew && !pwdSaved ? 'password-required' : ''}
+                >
+                  <Input
+                    value={form.password}
+                    onChange={f('password')}
+                    type="password"
+                    placeholder={isNew || !pwdSaved ? '••••••••' : 'leave blank to keep current'}
+                    highlight={!isNew && !pwdSaved && !form.password}
+                  />
+                </Field>
+                <Field label="SSL Mode">
+                  <select value={form.sslMode} onChange={f('sslMode')} className="text-[13px] rounded px-2 py-1.5 outline-none w-full"
+                    style={{ background: 'var(--sidebar-bg)', border: '1px solid var(--border)', color: 'var(--text)' }}>
+                    <option value="disable">Disable</option>
+                    <option value="prefer">Prefer</option>
+                    <option value="require">Require</option>
+                  </select>
+                </Field>
+              </>
+            )}
 
             {testResult && (
               <div className="flex items-center gap-2 px-3 py-2 rounded text-[12px]"
