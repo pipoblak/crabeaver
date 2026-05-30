@@ -110,14 +110,21 @@ backend layer and in `src/connectors/`.
 
 ## Getting started
 
-**Prerequisites:** [Rust](https://rustup.rs) (stable), [Node.js](https://nodejs.org) 20+, and the
-[Tauri v2 system dependencies](https://tauri.app/start/prerequisites/) for your OS.
+**Prerequisites**
+
+- **[Rust](https://rustup.rs)** (stable) — Tauri compiles a native Rust core, so the `cargo`
+  toolchain is required to build and run the app. `rustup` installs it.
+- **[Node.js](https://nodejs.org)** 20+
+- The **[Tauri v2 system dependencies](https://tauri.app/start/prerequisites/)** for your OS
+  (e.g. WebKitGTK on Linux; Xcode command-line tools on macOS).
 
 ```bash
 git clone <this-repo> crabeaver && cd crabeaver
-npm install
-npm run tauri dev        # launch the app with hot-reload (frontend + Rust)
+npm install                  # installs the front end deps AND the Tauri CLI
+npm run tauri dev            # build the Rust core + launch the app with hot-reload
 ```
+
+> First launch compiles the Rust backend, so it takes a few minutes; later runs are incremental.
 
 Other useful commands:
 
