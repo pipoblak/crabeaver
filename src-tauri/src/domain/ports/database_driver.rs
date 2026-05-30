@@ -5,6 +5,7 @@ use crate::domain::error::DriverError;
 use crate::domain::models::connection::Connection;
 use crate::domain::models::query::QueryResult;
 use crate::domain::models::schema::SchemaInfo;
+use crate::domain::models::schema_details::SchemaDetails;
 use crate::domain::models::session::{Lock, Session};
 use crate::domain::models::table_details::TableDetails;
 
@@ -66,6 +67,15 @@ pub trait DatabaseDriver: Send + Sync {
         schema: &str,
         table:  &str,
     ) -> Result<TableDetails, DriverError>;
+
+    /// Objects in one schema, grouped by kind (tables, views, matviews,
+    /// functions, sequences). `Unsupported` when `capabilities().schema_details`
+    /// is false.
+    async fn schema_details(
+        &self,
+        conn:   &Connection,
+        schema: &str,
+    ) -> Result<SchemaDetails, DriverError>;
 
     // ── Server activity (Postgres-style; optional) ───────────────────────────
 

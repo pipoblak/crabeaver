@@ -169,6 +169,25 @@ async fn concurrent_queries_share_one_pool_no_deadlock() {
 }
 
 #[tokio::test]
+async fn schema_details_lists_tables_and_views() {
+    let tmp = NamedTempFile::new().unwrap();
+    let c = conn(tmp.path().to_str().unwrap());
+    let d = SqliteDriver::new();
+    seed(&d, &c).await;
+    d.execute(&c, "CREATE VIEW recent_books AS SELECT * FROM books").await.unwrap();
+
+    let sd = d.schema_details(&c, "main").await.unwrap();
+
+    let tables: Vec<&str> = sd.tables.iter().map(|o| o.name.as_str()).collect();
+    assert!(tables.contains(&"authors") && tables.contains(&"books"));
+    assert!(sd.views.iter().any(|o| o.name == "recent_books"));
+    // SQLite has no functions or sequences — these stay empty, not errors.
+    assert!(sd.functions.is_empty());
+    assert!(sd.sequences.is_empty());
+    assert!(sd.materialized_views.is_empty());
+}
+
+#[tokio::test]
 async fn connecting_to_a_missing_file_errors_not_creates() {
     let c = conn("/nonexistent/dir/does_not_exist.db");
     let d = SqliteDriver::new();

@@ -92,6 +92,7 @@ pub struct Capabilities {
     pub schemas:        bool,
     pub list_databases: bool,
     pub table_details:  bool,
+    pub schema_details: bool,
     pub sessions:       bool,
     pub locks:          bool,
     pub cancel:         bool,

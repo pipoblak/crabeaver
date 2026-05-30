@@ -11,6 +11,7 @@ use crate::domain::error::DriverError;
 use crate::domain::models::connection::Connection;
 use crate::domain::models::query::{ColumnInfo, QueryResult};
 use crate::domain::models::schema::{SchemaInfo, TableInfo};
+use crate::domain::models::schema_details::{ObjectSummary, SchemaDetails};
 use crate::domain::models::session::{Lock, Session};
 use crate::domain::models::table_details::{
     ColumnDetail, ConstraintDetail, ForeignKeyDetail, IndexDetail, TableDetails, TableProperties,
@@ -309,6 +310,74 @@ impl PostgresDriver {
                 tables: tables.into_iter().map(|(name, columns)| TableInfo { name, columns }).collect(),
             })
             .collect())
+    }
+
+    /// Objects in one schema, grouped by kind. Schema name is bound as a
+    /// parameter — never interpolated — so a hostile schema string is inert.
+    async fn schema_details_impl(pool: &PgPool, schema: &str) -> Result<SchemaDetails, DriverError> {
+        // Helper: run a (name, optional-detail) query bound to the schema.
+        async fn list(pool: &PgPool, sql: &str, schema: &str) -> Result<Vec<ObjectSummary>, DriverError> {
+            let rows = sqlx::query(sql).bind(schema).fetch_all(pool).await.map_err(query_err)?;
+            Ok(rows
+                .iter()
+                .map(|r| ObjectSummary {
+                    name:   r.try_get::<String, _>("name").unwrap_or_default(),
+                    detail: r.try_get::<String, _>("detail").ok(),
+                })
+                .collect())
+        }
+
+        let tables = list(
+            pool,
+            "SELECT t.table_name AS name,
+                    count(c.column_name)::text || ' cols' AS detail
+             FROM information_schema.tables t
+             LEFT JOIN information_schema.columns c
+               ON c.table_schema = t.table_schema AND c.table_name = t.table_name
+             WHERE t.table_schema = $1 AND t.table_type = 'BASE TABLE'
+             GROUP BY t.table_name
+             ORDER BY t.table_name",
+            schema,
+        )
+        .await?;
+
+        let views = list(
+            pool,
+            "SELECT table_name AS name, NULL::text AS detail
+             FROM information_schema.views
+             WHERE table_schema = $1 ORDER BY table_name",
+            schema,
+        )
+        .await?;
+
+        let materialized_views = list(
+            pool,
+            "SELECT matviewname AS name, NULL::text AS detail
+             FROM pg_catalog.pg_matviews
+             WHERE schemaname = $1 ORDER BY matviewname",
+            schema,
+        )
+        .await?;
+
+        let functions = list(
+            pool,
+            "SELECT routine_name AS name, data_type AS detail
+             FROM information_schema.routines
+             WHERE specific_schema = $1 ORDER BY routine_name",
+            schema,
+        )
+        .await?;
+
+        let sequences = list(
+            pool,
+            "SELECT sequence_name AS name, NULL::text AS detail
+             FROM information_schema.sequences
+             WHERE sequence_schema = $1 ORDER BY sequence_name",
+            schema,
+        )
+        .await?;
+
+        Ok(SchemaDetails { schema: schema.to_string(), tables, views, materialized_views, functions, sequences })
     }
 
     async fn list_databases_impl(pool: &PgPool) -> Result<Vec<String>, DriverError> {
@@ -693,6 +762,7 @@ impl DatabaseDriver for PostgresDriver {
             schemas:        true,
             list_databases: true,
             table_details:  true,
+            schema_details: true,
             sessions:       true,
             locks:          true,
             cancel:         true,
@@ -786,6 +856,11 @@ impl DatabaseDriver for PostgresDriver {
     ) -> Result<TableDetails, DriverError> {
         let pool = self.pool(conn).await?;
         Self::table_details_impl(&pool, schema, table).await
+    }
+
+    async fn schema_details(&self, conn: &Connection, schema: &str) -> Result<SchemaDetails, DriverError> {
+        let pool = self.pool(conn).await?;
+        Self::schema_details_impl(&pool, schema).await
     }
 
     async fn sessions(&self, conn: &Connection) -> Result<Vec<Session>, DriverError> {
