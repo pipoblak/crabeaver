@@ -5,7 +5,7 @@ mod commands;
 pub mod domain;
 pub mod infrastructure;
 
-use commands::table_details::get_table_details;
+use commands::table_details::{get_schema_details, get_table_details};
 use commands::biometric::{biometric_authenticate, biometric_available, enable_biometric};
 use commands::connectors::connector_capabilities;
 use commands::connections::{
@@ -105,6 +105,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // Table details
             get_table_details,
+            get_schema_details,
             // Dev tools
             open_devtools, log_from_frontend,
             // Biometric

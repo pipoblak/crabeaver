@@ -4,6 +4,7 @@
 use crate::application::connections::load_connection;
 use crate::domain::error::DriverError;
 use crate::domain::models::schema::SchemaInfo;
+use crate::domain::models::schema_details::SchemaDetails;
 use crate::domain::models::session::{Lock, Session};
 use crate::domain::models::table_details::TableDetails;
 use crate::infrastructure::database::AppState;
@@ -38,6 +39,16 @@ pub async fn table_details(
     let conn = load_connection(state, connection_id).await?;
     let driver = state.drivers.driver_for_str(&conn.driver)?;
     driver.table_details(&conn, schema, table).await
+}
+
+pub async fn schema_details(
+    state:         &AppState,
+    connection_id: &str,
+    schema:        &str,
+) -> Result<SchemaDetails, DriverError> {
+    let conn = load_connection(state, connection_id).await?;
+    let driver = state.drivers.driver_for_str(&conn.driver)?;
+    driver.schema_details(&conn, schema).await
 }
 
 pub async fn sessions(state: &AppState, connection_id: &str) -> Result<Vec<Session>, DriverError> {

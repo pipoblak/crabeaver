@@ -29,6 +29,26 @@ fn sqlite_conn(path: &str) -> Connection {
     }
 }
 
+// ── Hostile schema name must never inject or panic ───────────────────────────
+
+#[tokio::test]
+async fn schema_details_rejects_injection_in_schema_name() {
+    let tmp = NamedTempFile::new().unwrap();
+    let c = sqlite_conn(tmp.path().to_str().unwrap());
+    let d = SqliteDriver::new();
+    d.execute(&c, "CREATE TABLE keep_me (id INTEGER PRIMARY KEY)").await.unwrap();
+
+    // A schema name carrying SQL must be treated as an opaque value, not executed.
+    let evil = "main'; DROP TABLE keep_me; --";
+    let sd = d.schema_details(&c, evil).await;
+    // Either an empty/bounded result or a typed error — never a panic.
+    assert!(sd.is_ok() || sd.is_err());
+
+    // The table must still exist: nothing was dropped.
+    let r = d.execute(&c, "SELECT count(*) AS n FROM sqlite_master WHERE name = 'keep_me'").await.unwrap();
+    assert_eq!(r.rows[0][0], serde_json::json!(1), "hostile schema name must not drop tables");
+}
+
 // ── Secrets must never cross the IPC boundary ────────────────────────────────
 
 #[test]

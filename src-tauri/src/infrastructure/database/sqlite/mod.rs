@@ -11,6 +11,7 @@ use crate::domain::error::DriverError;
 use crate::domain::models::connection::Connection;
 use crate::domain::models::query::{ColumnInfo, QueryResult};
 use crate::domain::models::schema::{SchemaInfo, TableInfo};
+use crate::domain::models::schema_details::{ObjectSummary, SchemaDetails};
 use crate::domain::models::session::{Lock, Session};
 use crate::domain::models::table_details::{
     ColumnDetail, ConstraintDetail, ForeignKeyDetail, IndexDetail, TableDetails, TableProperties,
@@ -174,6 +175,43 @@ impl SqliteDriver {
             schema: MAIN_SCHEMA.to_string(),
             tables: tables.into_iter().map(|(name, columns)| TableInfo { name, columns }).collect(),
         }])
+    }
+
+    /// Objects in the (single) SQLite schema. SQLite only has tables and views
+    /// in `sqlite_master`; functions/sequences/matviews do not exist, so those
+    /// groups are always empty. The schema arg is accepted for signature parity
+    /// but SQLite has one implicit namespace.
+    async fn schema_details_impl(pool: &SqlitePool, schema: &str) -> Result<SchemaDetails, DriverError> {
+        let tables = sqlx::query(
+            "SELECT name FROM sqlite_master
+             WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+             ORDER BY name",
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(query_err)?
+        .iter()
+        .map(|r| ObjectSummary { name: r.try_get::<String, _>("name").unwrap_or_default(), detail: None })
+        .collect();
+
+        let views = sqlx::query(
+            "SELECT name FROM sqlite_master WHERE type = 'view' ORDER BY name",
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(query_err)?
+        .iter()
+        .map(|r| ObjectSummary { name: r.try_get::<String, _>("name").unwrap_or_default(), detail: None })
+        .collect();
+
+        Ok(SchemaDetails {
+            schema:             schema.to_string(),
+            tables,
+            views,
+            materialized_views: Vec::new(),
+            functions:          Vec::new(),
+            sequences:          Vec::new(),
+        })
     }
 
     async fn table_details_impl(
@@ -388,6 +426,7 @@ impl DatabaseDriver for SqliteDriver {
             schemas:        true,
             list_databases: true,
             table_details:  true,
+            schema_details: true,
             // SQLite is an embedded file: no server-side sessions/locks views and
             // no remote query cancellation.
             sessions:       false,
@@ -501,6 +540,11 @@ impl DatabaseDriver for SqliteDriver {
     ) -> Result<TableDetails, DriverError> {
         let pool = self.pool(conn).await?;
         Self::table_details_impl(&pool, table).await
+    }
+
+    async fn schema_details(&self, conn: &Connection, schema: &str) -> Result<SchemaDetails, DriverError> {
+        let pool = self.pool(conn).await?;
+        Self::schema_details_impl(&pool, schema).await
     }
 
     async fn sessions(&self, _conn: &Connection) -> Result<Vec<Session>, DriverError> {
