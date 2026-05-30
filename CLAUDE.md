@@ -11,7 +11,7 @@
 ```bash
 npm run tauri dev      # start dev server + hot-reload frontend + watch Rust
 cargo build            # Rust-only build check (from src-tauri/)
-npx tsc --noEmit       # TypeScript type check
+npm run build          # TS type check (tsc -b) + bundle — `tsc --noEmit` is a no-op here
 cargo test             # run Rust unit tests (from src-tauri/)
 ```
 
@@ -69,16 +69,39 @@ DevTools still available via **F12** (dev only) — not auto-opened.
 
 ## Architecture
 
+> **Adding/maintaining a database engine? Read [`AGENTS.md`](./AGENTS.md) first.**
+> It has the layering rules and the "how to add a connector" checklist. Each
+> backend layer and `src/connectors/` also has a folder-level `README.md`.
+
+### Connectors (engine decoupling)
+
+A database engine is a plug-in, reached through two ports:
+
+- `DatabaseDriver` (`src-tauri/src/domain/ports/database_driver.rs`) — connect,
+  execute, introspect, sessions/locks, cancel. One impl per engine in
+  `infrastructure/database/<engine>/`. Postgres and SQLite ship today.
+- `LanguageService` (`.../ports/language_service.rs`) — validation + completion,
+  dialect-parameterized so each engine lints with its own rules.
+
+Dispatch is by the connection's `driver` string: `Driver::parse` → `DriverRegistry`
+→ `Arc<dyn DatabaseDriver>`. Each connector declares `Capabilities`
+(`domain/capabilities.rs`); the frontend (`src/connectors/`) mirrors them and
+renders only supported features. Layers: `commands` (thin Tauri glue) → `application`
+(use cases) → `domain` (pure ports/types) ← `infrastructure` (engine adapters; the
+only place `sqlx` driver types live).
+
 ### Passwords / Keychain
 
-- macOS: `security-framework` legacy API (`SecKeychainAddGenericPassword`) — no per-app ACL, survives rebuilds
+- Adapter in `src-tauri/src/infrastructure/keychain/` (engine-agnostic, keyed by connection id)
+- macOS: `security` CLI (legacy `SecKeychainAddGenericPassword` semantics) — no per-app ACL, survives rebuilds
 - Other platforms: `keyring` crate (Windows Credential Manager, libsecret)
-- Passwords are **never** returned to the frontend — `ConnectionView` struct omits the field
+- Passwords are **never** returned to the frontend — `ConnectionView` struct omits the field (a disaster test pins this)
 - SQLite stores everything except passwords
 
 ### SQL Completion
 
-Context detection in `src-tauri/src/commands/sql_completion.rs`:
+Context detection in `src-tauri/src/infrastructure/language/sql/completion.rs`
+(dialect-parameterized; called via `application::language`):
 - `detect_context()` strips string literals, then paren content (depth > 0), then finds last clause keyword
 - Returns `CompletionResult { items, suggestTables, suggestColumns }` — frontend uses flags to inject schema items
 - Schema items scope to current statement (text after last `;`)
@@ -97,10 +120,14 @@ Tabs are files on disk (`get_queries_dir()`). Connection, database, query limit,
 
 | File | Purpose |
 |---|---|
-| `src-tauri/src/commands/connections.rs` | DB connection CRUD + keychain |
-| `src-tauri/src/commands/sql_completion.rs` | SQL autocomplete context detection |
-| `src-tauri/src/infrastructure/database/postgres.rs` | Postgres pool manager + query execution |
+| `src-tauri/src/domain/ports/database_driver.rs` | The `DatabaseDriver` trait every engine implements |
+| `src-tauri/src/domain/capabilities.rs` | `Driver`, `SqlDialect`, `Capabilities` |
+| `src-tauri/src/infrastructure/database/registry.rs` | Dispatch by driver string |
+| `src-tauri/src/infrastructure/database/postgres/` · `sqlite/` | Engine drivers (all engine SQL lives here) |
+| `src-tauri/src/infrastructure/language/sql/` | Dialect-parameterized validation + completion |
+| `src-tauri/src/application/` | Use cases (connections, query, introspection, language) |
+| `src-tauri/src/commands/` | Thin Tauri command adapters (no SQL) |
+| `src/connectors/` | Frontend connector descriptors (mirror of backend capabilities) |
 | `src/components/EditorTabs.tsx` | Main editor layout, run/results orchestration |
-| `src/components/ResultsPane.tsx` | Results table (TanStack Table), pagination |
-| `src/components/SqlEditor.tsx` | Monaco wrapper, schema-aware completion |
+| `src/components/SqlEditor.tsx` | Monaco wrapper, schema-aware completion (dialect-routed) |
 | `src/context/TabsContext.tsx` | Tab state management + persistence |

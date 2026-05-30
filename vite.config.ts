@@ -1,4 +1,6 @@
-import { defineConfig } from 'vite'
+// Import from 'vitest/config' (not 'vite') so the `test` block below type-checks
+// under `tsc -b`. It re-exports vite's defineConfig extended with Vitest options.
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'

@@ -576,7 +576,7 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
   }, [value, editorReady, validate])
 
   // ── SQL worker (statement splitting) ─────────────────────────────────────
-  const stmtWorkerRef = useRef<import('../workers/sqlWorker').SqlWorkerApi | null>(null)
+  const stmtWorkerRef = useRef<import('comlink').Remote<import('../workers/sqlWorker').SqlWorkerApi> | null>(null)
   const stmtRawWorker = useRef<Worker | null>(null)
   useEffect(() => {
     let mounted = true

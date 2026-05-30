@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import type * as monaco_t from 'monaco-editor'
+import type { Remote } from 'comlink'
 import type { SqlWorkerApi, Statement } from '@/workers/sqlWorker'
 
 interface Props {
   editor: monaco_t.editor.IStandaloneCodeEditor
   monaco: typeof monaco_t
-  workerApi: SqlWorkerApi | null
+  // The worker is comlink-wrapped, so its methods return Promises (Remote<>).
+  workerApi: Remote<SqlWorkerApi> | null
   value: string
 }
 

@@ -55,11 +55,10 @@ export default function SessionManagerTab({ connectionId, connectionName }: Prop
   const [detailW, setDetailW]     = useState(256)
   const [sqlH, setSqlH]           = useState(120)
   const onDetailResize  = useCallback((w: number) => setDetailW(w), [])
-  const _onSqlResize    = useCallback((h: number) => setSqlH(h), [])
-  // useResize registers drag listeners as a side effect; keep the calls even
-  // though the returned drag state is currently unwired (prefixed to satisfy lint).
-  const _detailDrag = useResize(detailW, onDetailResize, 'horizontal', 160, 500)
-  const _sqlDrag    = useResize(sqlH, (h) => setSqlH(h), 'vertical', 60, 300)
+  // The returned drag state is currently unwired, but useResize is kept (called
+  // for its hook/side effects) so the resize handles still register.
+  useResize(detailW, onDetailResize, 'horizontal', 160, 500)
+  useResize(sqlH, (h) => setSqlH(h), 'vertical', 60, 300)
 
   const load = useCallback(async () => {
     setLoading(true); setError(null)

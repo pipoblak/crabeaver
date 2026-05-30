@@ -15,6 +15,11 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* Path alias — must mirror vite.config.ts's resolve.alias so `tsc -b`
+       resolves `@/` imports (it does not read the vite config). Modern TS
+       resolves `paths` relative to this file, so no `baseUrl` is needed. */
+    "paths": { "@/*": ["./src/*"] },
+
     /* Linting */
     "noUnusedLocals": true,
     "noUnusedParameters": true,

@@ -747,7 +747,7 @@ export default function EditorTabs() {
                     onBack={resultTabId => handleBack(active.id, resultTabId)}
                     onSort={(resultTabId, col, dir) => handleSort(active.id, resultTabId, col, dir)}
                     onColumnFilter={(resultTabId, col, val, op) => handleColumnFilter(active.id, resultTabId, col, val, op)}
-                    onEditSql={(resultTabId, sql) => handleEditSql(active.id, sql)}
+                    onEditSql={(_resultTabId, sql) => handleEditSql(active.id, sql)}
                     onLoadMore={resultTabId => handleLoadMore(active.id, resultTabId)}
                     elapsed={elapsed}
                   />
