@@ -1,7 +1,9 @@
-mod application;
+// Public so integration + disaster tests (in `tests/`) can drive the domain,
+// drivers, and use cases directly. `commands` stays private — it is Tauri glue.
+pub mod application;
 mod commands;
-mod domain;
-mod infrastructure;
+pub mod domain;
+pub mod infrastructure;
 
 use commands::table_details::get_table_details;
 use commands::biometric::{biometric_authenticate, biometric_available, enable_biometric};

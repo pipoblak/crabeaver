@@ -4,6 +4,7 @@ use crate::domain::capabilities::{Capabilities, Driver};
 use crate::domain::error::DriverError;
 use crate::domain::ports::database_driver::DatabaseDriver;
 use crate::infrastructure::database::postgres::PostgresDriver;
+use crate::infrastructure::database::sqlite::SqliteDriver;
 
 /// Owns one long-lived instance of every database driver. Each driver keeps its
 /// own connection pools, so the registry must outlive individual requests — it is
@@ -13,6 +14,7 @@ use crate::infrastructure::database::postgres::PostgresDriver;
 /// in `new`, and add its `Driver` arm to `driver_for`. Nothing else dispatches.
 pub struct DriverRegistry {
     postgres: Arc<dyn DatabaseDriver>,
+    sqlite:   Arc<dyn DatabaseDriver>,
 }
 
 impl Default for DriverRegistry {
@@ -25,6 +27,7 @@ impl DriverRegistry {
     pub fn new() -> Self {
         Self {
             postgres: Arc::new(PostgresDriver::new()),
+            sqlite:   Arc::new(SqliteDriver::new()),
         }
     }
 
@@ -33,7 +36,8 @@ impl DriverRegistry {
     pub fn driver_for(&self, driver: Driver) -> Result<Arc<dyn DatabaseDriver>, DriverError> {
         match driver {
             Driver::Postgres => Ok(self.postgres.clone()),
-            d @ (Driver::Sqlite | Driver::MySql) => Err(DriverError::Unsupported(format!(
+            Driver::Sqlite => Ok(self.sqlite.clone()),
+            d @ Driver::MySql => Err(DriverError::Unsupported(format!(
                 "the {} driver is not yet implemented",
                 d.as_str()
             ))),
@@ -52,8 +56,8 @@ impl DriverRegistry {
 
     /// Every registered driver. Lets engine-agnostic call sites (delete/disconnect
     /// a connection whose driver string we don't want to look up) act across all.
-    fn all(&self) -> [&Arc<dyn DatabaseDriver>; 1] {
-        [&self.postgres]
+    fn all(&self) -> [&Arc<dyn DatabaseDriver>; 2] {
+        [&self.postgres, &self.sqlite]
     }
 
     /// Drop any cached pool for this id across every driver. A no-op for drivers

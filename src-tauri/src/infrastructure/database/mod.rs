@@ -1,5 +1,6 @@
 pub mod postgres;
 pub mod registry;
+pub mod sqlite;
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
