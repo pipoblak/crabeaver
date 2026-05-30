@@ -52,8 +52,13 @@ export function getViewportStatements(
   firstLine: number,  // 1-indexed (Monaco)
   lastLine: number,
 ): Statement[] {
+  // Include any statement that OVERLAPS the viewport, not only those whose start
+  // line is visible. A multi-line statement begun above the viewport top still
+  // needs validating when its body is what's on screen (scroll into a long stmt).
+  const first = firstLine - 1  // → 0-indexed
+  const last  = lastLine - 1
   return splitStatements(lines).filter(
-    s => s.start >= firstLine - 1 && s.start <= lastLine - 1
+    s => s.start <= last && s.start + s.lineCount - 1 >= first
   )
 }
 

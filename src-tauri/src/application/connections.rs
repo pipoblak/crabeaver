@@ -14,7 +14,7 @@ use crate::infrastructure::biometric;
 use crate::infrastructure::database::AppState;
 use crate::infrastructure::keychain;
 
-const BIOMETRIC_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
+const BIOMETRIC_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
 
 fn db_err(e: impl std::fmt::Display) -> DriverError {
     DriverError::Query(e.to_string())
