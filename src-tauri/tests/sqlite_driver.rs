@@ -144,6 +144,30 @@ async fn registry_dispatches_by_driver_string() {
     assert_eq!(reg.capabilities("sqlite").unwrap().driver, Driver::Sqlite);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_queries_share_one_pool_no_deadlock() {
+    let tmp = NamedTempFile::new().unwrap();
+    let c = conn(tmp.path().to_str().unwrap());
+    let d = std::sync::Arc::new(SqliteDriver::new());
+    seed(&d, &c).await;
+
+    // 16 concurrent first-time-ish queries exercise the pool() fast path + race
+    // window. None must deadlock (the connect no longer holds the pools lock),
+    // and all must see the seeded data.
+    let mut handles = Vec::new();
+    for _ in 0..16 {
+        let d = d.clone();
+        let c = c.clone();
+        handles.push(tokio::spawn(async move {
+            d.execute(&c, "SELECT COUNT(*) FROM authors").await.unwrap()
+        }));
+    }
+    for h in handles {
+        let r = h.await.unwrap();
+        assert_eq!(r.rows[0][0], serde_json::json!(2));
+    }
+}
+
 #[tokio::test]
 async fn connecting_to_a_missing_file_errors_not_creates() {
     let c = conn("/nonexistent/dir/does_not_exist.db");

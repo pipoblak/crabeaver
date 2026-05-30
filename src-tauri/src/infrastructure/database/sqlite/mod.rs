@@ -81,11 +81,16 @@ impl SqliteDriver {
 
     async fn pool(&self, conn: &Connection) -> Result<SqlitePool, DriverError> {
         let key = (conn.id.clone(), conn.database.clone());
-        let mut pools = self.pools.lock().await;
-        if let Some(p) = pools.get(&key)
-            && !p.is_closed()
+
+        // Fast path: existing live pool. Release the lock before the connect await
+        // so a slow open never blocks pool() for other connections.
         {
-            return Ok(p.clone());
+            let pools = self.pools.lock().await;
+            if let Some(p) = pools.get(&key)
+                && !p.is_closed()
+            {
+                return Ok(p.clone());
+            }
         }
 
         let pool = SqlitePoolOptions::new()
@@ -94,6 +99,13 @@ impl SqliteDriver {
             .await
             .map_err(conn_err)?;
 
+        // Re-acquire and insert, honoring a race.
+        let mut pools = self.pools.lock().await;
+        if let Some(p) = pools.get(&key)
+            && !p.is_closed()
+        {
+            return Ok(p.clone());
+        }
         pools.insert(key, pool.clone());
         Ok(pool)
     }

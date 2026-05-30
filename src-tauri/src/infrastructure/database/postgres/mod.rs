@@ -131,13 +131,20 @@ impl PostgresDriver {
     /// Get or create the pool for this connection's `(id, database)`.
     async fn pool(&self, conn: &Connection) -> Result<PgPool, DriverError> {
         let key = (conn.id.clone(), conn.database.clone());
-        let mut pools = self.pools.lock().await;
-        if let Some(p) = pools.get(&key)
-            && !p.is_closed()
+
+        // Fast path: an existing live pool. The lock is released before the
+        // connect await below, so a slow connect to one database never blocks
+        // pool() for every other connection.
         {
-            return Ok(p.clone());
+            let pools = self.pools.lock().await;
+            if let Some(p) = pools.get(&key)
+                && !p.is_closed()
+            {
+                return Ok(p.clone());
+            }
         }
 
+        // Connect WITHOUT holding the lock.
         let pool = PgPoolOptions::new()
             .max_connections(8)
             .min_connections(1)
@@ -145,6 +152,14 @@ impl PostgresDriver {
             .await
             .map_err(conn_err)?;
 
+        // Re-acquire and insert, honoring a race: if another task connected the
+        // same key meanwhile, use theirs and let ours drop.
+        let mut pools = self.pools.lock().await;
+        if let Some(p) = pools.get(&key)
+            && !p.is_closed()
+        {
+            return Ok(p.clone());
+        }
         pools.insert(key, pool.clone());
         Ok(pool)
     }

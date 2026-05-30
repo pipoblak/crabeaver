@@ -56,7 +56,15 @@ pub async fn add(
     .await
     .map_err(db_err)?;
 
-    keychain::store_password(&id, &password).map_err(DriverError::Auth)?;
+    // Roll back the row if the secret can't be stored, so we never leave a
+    // connection record without its password.
+    if let Err(e) = keychain::store_password(&id, &password) {
+        let _ = sqlx::query("DELETE FROM connections WHERE id = ?")
+            .bind(&id)
+            .execute(&state.db)
+            .await;
+        return Err(DriverError::Auth(e));
+    }
 
     Ok(ConnectionView { id, created_at: now, ..conn })
 }
@@ -183,7 +191,14 @@ pub async fn load_connection(state: &AppState, id: &str) -> Result<Connection, D
     .ok_or_else(|| DriverError::NotFound(format!("Connection '{}' not found", id)))?;
 
     let view = row_to_view(&row);
-    let password = keychain::load_password(id).map_err(DriverError::Auth)?;
+    // File engines (SQLite) have no password — tolerate a missing keychain entry
+    // instead of failing every operation on it.
+    let needs_password = Driver::parse(&view.driver).map(|d| d.requires_password()).unwrap_or(true);
+    let password = if needs_password {
+        keychain::load_password(id).map_err(DriverError::Auth)?
+    } else {
+        keychain::load_password(id).unwrap_or_default()
+    };
     Ok(view_with_password(view, password))
 }
 
