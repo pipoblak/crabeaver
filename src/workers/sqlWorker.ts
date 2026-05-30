@@ -12,7 +12,7 @@ export interface Statement {
   lineCount: number
 }
 
-function splitStatements(lines: string[]): Statement[] {
+export function splitStatements(lines: string[]): Statement[] {
   const stmts: Statement[] = []
   let current: string[] = []
   let currentStart = 0
@@ -38,7 +38,7 @@ function splitStatements(lines: string[]): Statement[] {
   return stmts
 }
 
-function getDirtyLines(oldLines: string[], newLines: string[]): number[] {
+export function getDirtyLines(oldLines: string[], newLines: string[]): number[] {
   const dirty: number[] = []
   const max = Math.max(oldLines.length, newLines.length)
   for (let i = 0; i < max; i++) {
@@ -47,7 +47,7 @@ function getDirtyLines(oldLines: string[], newLines: string[]): number[] {
   return dirty
 }
 
-function getViewportStatements(
+export function getViewportStatements(
   lines: string[],
   firstLine: number,  // 1-indexed (Monaco)
   lastLine: number,
@@ -57,7 +57,7 @@ function getViewportStatements(
   )
 }
 
-function getDirtyStatements(
+export function getDirtyStatements(
   oldLines: string[],
   newLines: string[],
   stmts: Statement[],
