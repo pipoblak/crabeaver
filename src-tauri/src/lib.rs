@@ -63,7 +63,9 @@ pub fn run() {
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(
-                    if cfg!(debug_assertions) { "debug" } else { "warn" }
+                    // sqlparser logs every parse at DEBUG — floods stderr (EAGAIN) and
+                    // buries our own logs. Silence it unless explicitly overridden via RUST_LOG.
+                    if cfg!(debug_assertions) { "debug,sqlparser=warn" } else { "warn" }
                 )),
         )
         .with_target(false)
