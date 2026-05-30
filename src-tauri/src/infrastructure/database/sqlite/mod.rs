@@ -18,7 +18,7 @@ use crate::domain::models::table_details::{
 use crate::domain::ports::database_driver::DatabaseDriver;
 
 /// SQLite has one implicit namespace. We report it under this schema name so the
-/// frontend's schema → table tree has a root, matching how DBeaver shows SQLite.
+/// frontend's schema → table tree has a root, like most SQL clients show SQLite.
 const MAIN_SCHEMA: &str = "main";
 
 fn conn_err(e: impl std::fmt::Display) -> DriverError {
