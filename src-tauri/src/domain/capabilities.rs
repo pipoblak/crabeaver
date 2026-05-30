@@ -33,6 +33,17 @@ impl Driver {
             Driver::MySql    => "mysql",
         }
     }
+
+    /// The SQL dialect this engine's language service should use. `None` would be
+    /// returned by a future non-SQL engine (DynamoDB/PartiQL); every engine
+    /// modeled today is SQL.
+    pub fn sql_dialect(&self) -> Option<SqlDialect> {
+        match self {
+            Driver::Postgres => Some(SqlDialect::Postgres),
+            Driver::Sqlite   => Some(SqlDialect::Sqlite),
+            Driver::MySql    => Some(SqlDialect::MySql),
+        }
+    }
 }
 
 /// The SQL dialect a connector's language service should parse and complete with.

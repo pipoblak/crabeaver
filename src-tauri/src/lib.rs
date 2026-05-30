@@ -94,6 +94,7 @@ pub fn run() {
                 drivers:         DriverRegistry::new(),
                 biometric_cache: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
                 biometric_lock:  std::sync::Arc::new(tokio::sync::Mutex::new(())),
+                schema_indices:  std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
             });
             Ok(())
         })

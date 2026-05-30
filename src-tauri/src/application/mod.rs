@@ -4,4 +4,5 @@
 
 pub mod connections;
 pub mod introspection;
+pub mod language;
 pub mod query;

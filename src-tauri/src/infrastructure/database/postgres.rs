@@ -132,10 +132,10 @@ impl PostgresDriver {
     async fn pool(&self, conn: &Connection) -> Result<PgPool, DriverError> {
         let key = (conn.id.clone(), conn.database.clone());
         let mut pools = self.pools.lock().await;
-        if let Some(p) = pools.get(&key) {
-            if !p.is_closed() {
-                return Ok(p.clone());
-            }
+        if let Some(p) = pools.get(&key)
+            && !p.is_closed()
+        {
+            return Ok(p.clone());
         }
 
         let pool = PgPoolOptions::new()
