@@ -23,6 +23,14 @@ const CHUNK_SIZE       = 250   // statements per IPC batch — bounds Rust parse
 const PARALLEL_BATCHES = 4     // batches per round (≤1000 stmts in flight)
 const CHUNK_DELAY      = 50    // ms yield between rounds — keeps UI responsive
 
+// Monaco renders only the first 500 markers per resource — see
+// markerDecorationsService.read({ take: 500 }), sorted by position. Dump more and
+// the squiggles silently stop after line ~N (the top of the file eats the whole
+// budget). When a file exceeds this, scope markers + line decorations to the
+// visible region so what's on screen always shows its diagnostics.
+const MARKER_CAP      = 500
+const VIEWPORT_BUFFER = 300    // lines of slack above/below the viewport
+
 export function useSqlValidation(
   monaco: typeof monaco_t | null,
   editorRef: React.RefObject<monaco_t.editor.IStandaloneCodeEditor | null>,
@@ -67,12 +75,26 @@ export function useSqlValidation(
     const all: SqlDiagnostic[] = []
     cache.current.forEach(e => all.push(...e.diagnostics))
 
+    // Status-bar counts always reflect the WHOLE file, even when we only render a
+    // windowed subset of markers below.
     setResults(
       all.filter(d => d.severity === 'error').length,
       all.filter(d => d.severity === 'warning').length,
     )
 
-    monaco.editor.setModelMarkers(model, 'sql-validation', all.map(d => {
+    // When over Monaco's 500-marker cap, restrict rendering to the visible region
+    // (± buffer) so squiggles follow the viewport on scroll instead of dying at
+    // line ~500. Below the cap, render everything (keeps the overview ruler whole).
+    let lo = 1, hi = maxLine
+    const windowed = all.length > MARKER_CAP
+    if (windowed) {
+      const ranges = editor.getVisibleRanges()
+      lo = (ranges.length ? ranges[0].startLineNumber : 1) - VIEWPORT_BUFFER
+      hi = (ranges.length ? ranges[ranges.length - 1].endLineNumber : maxLine) + VIEWPORT_BUFFER
+    }
+
+    const shown = (windowed ? all.filter(d => d.line >= lo && d.line <= hi) : all).slice(0, MARKER_CAP)
+    monaco.editor.setModelMarkers(model, 'sql-validation', shown.map(d => {
       const line = Math.min(d.line, maxLine)
       return {
         startLineNumber: line, startColumn: d.column,
@@ -85,6 +107,9 @@ export function useSqlValidation(
     const decs: monaco_t.editor.IModelDeltaDecoration[] = []
     cache.current.forEach((entry, startLine) => {
       if (!entry.diagnostics.length) return
+      // Same windowing as markers: skip statements outside the visible region when
+      // the file is huge, so we don't push tens of thousands of decorations.
+      if (windowed && (startLine + entry.lineCount < lo || startLine + 1 > hi)) return
       const cls = entry.diagnostics.some(d => d.severity === 'error') ? 'sql-error-line' : 'sql-warning-line'
       const s = Math.min(startLine + 1, maxLine)
       const e = Math.min(startLine + entry.lineCount, maxLine)
