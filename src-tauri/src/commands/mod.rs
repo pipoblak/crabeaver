@@ -1,4 +1,5 @@
 pub mod biometric;
+pub mod connectors;
 pub mod table_details;
 pub mod connections;
 pub mod marketplace;

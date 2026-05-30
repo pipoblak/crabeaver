@@ -5,6 +5,7 @@ mod infrastructure;
 
 use commands::table_details::get_table_details;
 use commands::biometric::{biometric_authenticate, biometric_available, enable_biometric};
+use commands::connectors::connector_capabilities;
 use commands::connections::{
     add_connection, cancel_query, connect, connection_status, delete_connection,
     disconnect, execute_query, get_locks, get_schemas, get_sessions, has_password,
@@ -18,7 +19,7 @@ use commands::queries::{
 use commands::settings::{delete_theme, get_setting, get_themes, save_theme, set_setting};
 use commands::sql_completion::get_sql_completions;
 use commands::sql_validation::{set_schema_index, validate_sql, validate_sql_batch};
-use infrastructure::database::{postgres::PostgresPoolManager, AppState};
+use infrastructure::database::{registry::DriverRegistry, AppState};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
 use std::str::FromStr;
 use tauri::Manager;
@@ -90,10 +91,9 @@ pub fn run() {
 
             app.manage(AppState {
                 db:              pool,
-                pg_pools:        PostgresPoolManager::new(),
+                drivers:         DriverRegistry::new(),
                 biometric_cache: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
                 biometric_lock:  std::sync::Arc::new(tokio::sync::Mutex::new(())),
-                query_pids:      std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             });
             Ok(())
         })
@@ -104,6 +104,8 @@ pub fn run() {
             open_devtools, log_from_frontend,
             // Biometric
             biometric_available, biometric_authenticate, enable_biometric,
+            // Connectors
+            connector_capabilities,
             // Connections
             list_connections, add_connection, update_connection, delete_connection,
             test_connection, connect, disconnect, connection_status, has_password,
