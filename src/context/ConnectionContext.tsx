@@ -12,18 +12,24 @@ interface ConnectionContextValue {
   disconnect:     (id: string) => Promise<void>
   isConnected:    (id: string) => boolean
   markConnected:  (id: string) => void
+  /** Increments each time `connect(id)` runs — consumers use it to re-fetch
+   *  connection-derived state (schema, completions) after a (re)connect. */
+  connectEpoch:   (id: string) => number
 }
 
 const ConnectionContext = createContext<ConnectionContextValue>({
   connections: [], connected: new Set(), revalidating: false,
   reload: async () => {}, connect: async () => {}, disconnect: async () => {},
-  isConnected: () => false, markConnected: () => {},
+  isConnected: () => false, markConnected: () => {}, connectEpoch: () => 0,
 })
 
 export function ConnectionProvider({ children }: { children: React.ReactNode }) {
   const [connections, setConnections]   = useState<Connection[]>([])
   const [connected, setConnected]       = useState(new Set<string>())
   const [revalidating, setRevalidating] = useState(false)
+  // Bumped per connection on each explicit connect(), so the editor refetches
+  // schema (and clears a stale connection error) after a reconnect.
+  const [connectEpochs, setConnectEpochs] = useState<Record<string, number>>({})
 
   const reload = useCallback(async () => {
     setRevalidating(true)
@@ -44,6 +50,7 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
   const connect = useCallback(async (id: string) => {
     await invoke('connect', { id })
     setConnected(prev => new Set([...prev, id]))
+    setConnectEpochs(prev => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }))
   }, [])
 
   const disconnect = useCallback(async (id: string) => {
@@ -55,11 +62,12 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
   const markConnected = useCallback((id: string) => {
     setConnected(prev => prev.has(id) ? prev : new Set([...prev, id]))
   }, [])
+  const connectEpoch  = useCallback((id: string) => connectEpochs[id] ?? 0, [connectEpochs])
 
   return (
     <ConnectionContext.Provider value={{
       connections, connected, revalidating,
-      reload, connect, disconnect, isConnected, markConnected,
+      reload, connect, disconnect, isConnected, markConnected, connectEpoch,
     }}>
       {children}
     </ConnectionContext.Provider>

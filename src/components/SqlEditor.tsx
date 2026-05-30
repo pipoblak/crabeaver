@@ -113,7 +113,7 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
   { value, onChange, connectionId, driver, scrollKey, database, onSchemaStatus, onRunQuery }, ref) {
   const monaco = useMonaco()
   const { theme } = useTheme()
-  const { markConnected } = useConnections()
+  const { markConnected, connectEpoch } = useConnections()
   const dark = isDark(theme.bg)
   const [editorReady, setEditorReady] = useState(false)
   const [editorInstance, setEditorInstance] = useState<monaco_t.editor.IStandaloneCodeEditor | null>(null)
@@ -231,7 +231,9 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
       schemaCacheRef.current = null
       fail(e)
     })
-  }, [connectionId, database])
+    // `connectEpoch(...)` in deps: re-run on an explicit reconnect (same
+    // connectionId/database) so a stale connection error clears and schema refreshes.
+  }, [connectionId, database, connectionId ? connectEpoch(connectionId) : 0])
 
   // Schema-aware table validation now runs in Rust (validate_sql_batch, AST walk).
   // The index is primed via set_schema_index in the schema-fetch effect above;
