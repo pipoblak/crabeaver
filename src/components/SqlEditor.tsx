@@ -6,6 +6,7 @@ import { useConnections } from '@/context/ConnectionContext'
 import { useSqlValidation } from '@/hooks/useSqlValidation'
 import EditorGutter from '@/components/EditorGutter'
 import { loadScroll, saveScroll } from '@/lib/scroll'
+import { resolveIdentifier, type ResolveTarget } from '@/lib/resolveIdentifier'
 import type * as monaco_t from 'monaco-editor'
 
 interface SqlCompletion {
@@ -98,6 +99,8 @@ interface Props {
   database?: string
   onSchemaStatus?: (status: { tables: number; error?: string; fkColumns?: Set<string>; fkRefs?: Map<string, { table: string; col: string }> } | null) => void
   onRunQuery?: (sql: string, newTab: boolean) => void
+  /** Cmd/Ctrl+click on a known schema/table identifier opens its details tab. */
+  onOpenObject?: (target: ResolveTarget) => void
 }
 
 function isDark(hex: string): boolean {
@@ -110,7 +113,7 @@ function isDark(hex: string): boolean {
 }
 
 const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
-  { value, onChange, connectionId, driver, scrollKey, database, onSchemaStatus, onRunQuery }, ref) {
+  { value, onChange, connectionId, driver, scrollKey, database, onSchemaStatus, onRunQuery, onOpenObject }, ref) {
   const monaco = useMonaco()
   const { theme } = useTheme()
   const { markConnected, connectEpoch } = useConnections()
@@ -128,6 +131,8 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
   const monacoThemeName  = `crabeaver-${theme.name.replace(/[^a-z0-9]/gi, '-').toLowerCase()}`
   const onRunQueryRef    = useRef(onRunQuery)
   useEffect(() => { onRunQueryRef.current = onRunQuery }, [onRunQuery])
+  const onOpenObjectRef  = useRef(onOpenObject)
+  useEffect(() => { onOpenObjectRef.current = onOpenObject }, [onOpenObject])
   // Latest driver, read inside the (once-registered) completion provider so the
   // dialect follows connection switches without re-registering the provider.
   const driverRef        = useRef(driver)
@@ -167,6 +172,59 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
     // addCommand returns a string ID, not a disposable — commands live with the editor instance
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter,       () => runCurrent(false))
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter, () => runCurrent(true))
+  }, [monaco, editorReady])
+
+  // ── Cmd/Ctrl+click navigation ──────────────────────────────────────────────
+  // Cmd-hover underlines a known schema/table identifier; Cmd-click opens its
+  // details tab. Resolution uses the in-editor schema cache (schemaCacheRef).
+  useEffect(() => {
+    if (!monaco || !editorReady) return
+    const editor = editorRef.current
+    if (!editor) return
+
+    const decorations = editor.createDecorationsCollection()
+    const clear = () => decorations.clear()
+
+    const hitAt = (target: monaco_t.editor.IMouseTarget):
+      | { range: monaco_t.Range; resolved: ResolveTarget }
+      | null => {
+      const pos = target.position
+      const model = editor.getModel()
+      const cache = schemaCacheRef.current
+      if (!pos || !model || !cache) return null
+      const word = model.getWordAtPosition(pos)
+      if (!word) return null
+      const before = model.getValueInRange(
+        new monaco.Range(pos.lineNumber, 1, pos.lineNumber, word.startColumn),
+      )
+      const resolved = resolveIdentifier(word.word, before, cache)
+      if (!resolved) return null
+      return {
+        range: new monaco.Range(pos.lineNumber, word.startColumn, pos.lineNumber, word.endColumn),
+        resolved,
+      }
+    }
+
+    const moveDisp = editor.onMouseMove(e => {
+      if (!(e.event.metaKey || e.event.ctrlKey)) { clear(); return }
+      const hit = hitAt(e.target)
+      if (!hit) { clear(); return }
+      decorations.set([{ range: hit.range, options: { inlineClassName: 'sql-cmd-link' } }])
+    })
+
+    const downDisp = editor.onMouseDown(e => {
+      if (!(e.event.metaKey || e.event.ctrlKey) || !e.event.leftButton) return
+      const hit = hitAt(e.target)
+      if (!hit) return
+      e.event.preventDefault()
+      e.event.stopPropagation()
+      onOpenObjectRef.current?.(hit.resolved)
+      clear()
+    })
+
+    const upDisp = editor.onKeyUp(() => clear())
+
+    return () => { moveDisp.dispose(); downDisp.dispose(); upDisp.dispose(); clear() }
   }, [monaco, editorReady])
 
   // ── Schema fetch: stale-while-revalidate ──────────────────────────────────

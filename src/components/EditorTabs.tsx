@@ -6,6 +6,7 @@ import SqlEditor, { type SqlEditorRef } from '@/components/SqlEditor'
 import SessionManagerTab from '@/components/SessionManagerTab'
 import LockManagerTab from '@/components/LockManagerTab'
 import TableDetailsTab from '@/components/TableDetailsTab'
+import SchemaDetailsTab from '@/components/SchemaDetailsTab'
 import ResultsPane, { type QueryResult, type ResultTab } from '@/components/ResultsPane'
 import ResizeHandle from '@/components/ResizeHandle'
 
@@ -52,7 +53,7 @@ function saveCachedResults(filePath: string, tr: TabResults): 'ok' | 'too_large'
 function newResultId() { return `r${Date.now()}-${Math.random().toString(36).slice(2, 7)}` }
 
 export default function EditorTabs() {
-  const { tabs, activeId, setActiveId, openQueryTab, closeTab, updateContent, renameTab,
+  const { tabs, activeId, setActiveId, openQueryTab, openSpecialTab, closeTab, updateContent, renameTab,
           setTabConnection, setTabDatabase, setTabQueryLimit } = useTabs()
   const DEFAULT_LIMIT_VAL = DEFAULT_LIMIT
 
@@ -714,6 +715,19 @@ export default function EditorTabs() {
         {active?.type === 'table-details' && active.connectionId && (
           <TableDetailsTab key={active.id} connectionId={active.connectionId} schema={(active as any).schema ?? 'public'} table={(active as any).table ?? ''} />
         )}
+        {active?.type === 'schema-details' && active.connectionId && (
+          <SchemaDetailsTab
+            key={active.id}
+            connectionId={active.connectionId}
+            schema={(active as any).schema ?? 'public'}
+            driver={connections.find(c => c.id === active.connectionId)?.driver}
+            onOpenTable={(schema, table) => openSpecialTab('table-details', table, {
+              connectionId: active.connectionId,
+              connectionName: active.connectionName,
+              ...({ schema, table } as any),
+            })}
+          />
+        )}
         {isQueryTab && active && (
           <>
             <div style={{ flex: 1, minHeight: MIN_EDITOR_H, position: 'relative', overflow: 'hidden' }}>
@@ -728,6 +742,21 @@ export default function EditorTabs() {
                 database={active.database}
                 onSchemaStatus={setSchemaStatus}
                 onRunQuery={(_sql, newTab) => runQuery(newTab)}
+                onOpenObject={target => {
+                  if (target.kind === 'schema') {
+                    openSpecialTab('schema-details', target.schema, {
+                      connectionId: active.connectionId,
+                      connectionName: active.connectionName,
+                      ...({ schema: target.schema } as any),
+                    })
+                  } else {
+                    openSpecialTab('table-details', target.table, {
+                      connectionId: active.connectionId,
+                      connectionName: active.connectionName,
+                      ...({ schema: target.schema, table: target.table } as any),
+                    })
+                  }
+                }}
               />
             </div>
 

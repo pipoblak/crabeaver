@@ -1,4 +1,4 @@
-export type TabType = 'query' | 'session-manager' | 'lock-manager' | 'table-details'
+export type TabType = 'query' | 'session-manager' | 'lock-manager' | 'table-details' | 'schema-details'
 
 export interface Tab {
   id:           number

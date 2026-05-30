@@ -10,6 +10,7 @@ export interface Capabilities {
   schemas:       boolean
   listDatabases: boolean
   tableDetails:  boolean
+  schemaDetails: boolean
   sessions:      boolean
   locks:         boolean
   cancel:        boolean
@@ -18,6 +19,9 @@ export interface Capabilities {
 
 /** Shape of the connection form a connector needs. */
 export type ConnectionKind = 'server' | 'file'
+
+/** Object kinds a connector's schema-details tab can list, in display order. */
+export type SchemaObjectKind = 'tables' | 'views' | 'materializedViews' | 'functions' | 'sequences'
 
 export interface ConnectorDescriptor {
   driver:         DriverId
@@ -31,4 +35,6 @@ export interface ConnectorDescriptor {
   /** `server` → host/port/user/password; `file` → a single file path. */
   connectionKind: ConnectionKind
   capabilities:   Capabilities
+  /** Which object kinds the schema-details tab renders for this engine. */
+  schemaObjectKinds: SchemaObjectKind[]
 }

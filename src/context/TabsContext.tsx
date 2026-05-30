@@ -160,6 +160,9 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
       if (type === 'table-details') {
         return (t as any).schema === (extra as any)?.schema && (t as any).table === (extra as any)?.table
       }
+      if (type === 'schema-details') {
+        return (t as any).schema === (extra as any)?.schema
+      }
       return true
     })
     if (existing) { setActiveIdState(existing.id); return }

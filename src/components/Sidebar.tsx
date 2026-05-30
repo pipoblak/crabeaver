@@ -15,7 +15,7 @@ interface SchemaInfo  { schema: string; tables: TableInfo[] }
 
 interface Props {
   openSettings?: (section?: string, connectionId?: string) => void
-  openTab?: (type: 'session-manager' | 'lock-manager' | 'table-details', title: string, extra: Record<string, string>) => void
+  openTab?: (type: 'session-manager' | 'lock-manager' | 'table-details' | 'schema-details', title: string, extra: Record<string, string>) => void
   width?: number
 }
 

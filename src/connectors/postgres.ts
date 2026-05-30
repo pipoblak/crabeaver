@@ -12,9 +12,11 @@ export const postgres: ConnectorDescriptor = {
     schemas:       true,
     listDatabases: true,
     tableDetails:  true,
+    schemaDetails: true,
     sessions:      true,
     locks:         true,
     cancel:        true,
     transactions:  true,
   },
+  schemaObjectKinds: ['tables', 'views', 'materializedViews', 'functions', 'sequences'],
 }
