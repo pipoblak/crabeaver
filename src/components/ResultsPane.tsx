@@ -5,33 +5,8 @@ import {
 } from '@tanstack/react-table'
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { ChevronUp, ChevronDown, ChevronsUpDown, Loader2, XCircle, X, Edit2, Filter, Link } from 'lucide-react'
-
-interface ColumnInfo { name: string; typeName: string }
-
-export interface QueryResult {
-  columns:       ColumnInfo[]
-  rows:          unknown[][]
-  affectedRows?: number
-  executionMs:   number
-}
-
-export interface ResultTab {
-  id:           string
-  title:        string
-  data?:        QueryResult
-  error?:       string
-  running?:     boolean
-  loadingMore?: boolean
-  sql?:         string      // last executed SQL (shown as preview)
-  baseSql?:     string      // SQL without ORDER BY/LIMIT/WHERE — for re-sort, filter, pagination
-  sortCol?:     string
-  sortDir?:     'asc' | 'desc'
-  colFilters?:  Record<string, string>  // col → filter value
-  colFilterOps?: Record<string, string> // col → operator: '~' | '=' | '!=' | '>' | '<'
-  offset?:      number
-  hasMore?:     boolean
-  history?:     Array<Pick<ResultTab, 'data'|'sql'|'baseSql'|'sortCol'|'sortDir'|'colFilters'|'colFilterOps'|'offset'|'hasMore'>>
-}
+import type { QueryResult, ResultTab } from '@/lib/results'
+export type { QueryResult, ResultTab } from '@/lib/results'
 
 interface Props {
   tabs:         ResultTab[]
