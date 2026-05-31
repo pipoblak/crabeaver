@@ -1,6 +1,10 @@
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Loader2, XCircle, Key, Link, Table2, Code2, Info } from 'lucide-react'
+import { Loader2, XCircle, Key, Link, Table2, Code2, Info, Database } from 'lucide-react'
+import ResultTable from '@/components/ResultTable'
+import { useTableData } from '@/hooks/useTableData'
+import { driverToDialect } from '@/lib/queryBuilder'
+import type { ResultTab } from '@/lib/results'
 
 interface ColumnDetail { ordinal: number; name: string; dataType: string; nullable: boolean; defaultVal?: string; comment?: string; isPk: boolean; isUnique: boolean }
 interface ConstraintDetail { name: string; kind: string; columns: string[]; definition: string }
@@ -9,20 +13,21 @@ interface IndexDetail { name: string; unique: boolean; columns: string[]; defini
 interface TableProperties { oid: number; owner: string; tablespace?: string; comment?: string; rowCount?: number; sizePretty?: string; hasRls: boolean }
 interface TableDetails { schema: string; table: string; properties: TableProperties; columns: ColumnDetail[]; constraints: ConstraintDetail[]; foreignKeys: ForeignKeyDetail[]; indexes: IndexDetail[]; ddl: string }
 
-type Section = 'columns' | 'constraints' | 'foreign_keys' | 'indexes' | 'ddl' | 'properties'
+type Section = 'columns' | 'constraints' | 'foreign_keys' | 'indexes' | 'ddl' | 'properties' | 'data'
 
 const SECTIONS: { id: Section; label: string; icon: React.ReactNode }[] = [
   { id: 'properties',   label: 'Properties',   icon: <Info size={13} /> },
   { id: 'columns',      label: 'Columns',       icon: <Table2 size={13} /> },
+  { id: 'data',         label: 'Data',          icon: <Database size={13} /> },
   { id: 'constraints',  label: 'Constraints',   icon: <Key size={13} /> },
   { id: 'foreign_keys', label: 'Foreign Keys',  icon: <Link size={13} /> },
   { id: 'indexes',      label: 'Indexes',       icon: <Table2 size={13} /> },
   { id: 'ddl',          label: 'DDL',           icon: <Code2 size={13} /> },
 ]
 
-interface Props { connectionId: string; schema: string; table: string }
+interface Props { connectionId: string; schema: string; table: string; driver?: string }
 
-export default function TableDetailsTab({ connectionId, schema, table }: Props) {
+export default function TableDetailsTab({ connectionId, schema, table, driver }: Props) {
   const [details, setDetails] = useState<TableDetails | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState<string | null>(null)
@@ -66,6 +71,7 @@ export default function TableDetailsTab({ connectionId, schema, table }: Props) 
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         {section === 'properties' && <PropertiesSection p={details.properties} />}
         {section === 'columns'     && <ColumnsSection cols={details.columns} />}
+        {section === 'data'        && <TableDataSection connectionId={connectionId} schema={details.schema} table={details.table} driver={driver} foreignKeys={details.foreignKeys} />}
         {section === 'constraints' && <ConstraintsSection items={details.constraints} />}
         {section === 'foreign_keys'&& <ForeignKeysSection items={details.foreignKeys} />}
         {section === 'indexes'     && <IndexesSection items={details.indexes} />}
@@ -229,6 +235,59 @@ function DdlSection({ ddl }: { ddl: string }) {
       <div className="overflow-auto flex-1 p-4">
         <pre className="text-[13px] text-th-text" style={{ fontFamily: "'Cascadia Code', 'JetBrains Mono', Consolas, monospace" }}>{ddl}</pre>
       </div>
+    </div>
+  )
+}
+
+function TableDataSection({ connectionId, schema, table, driver, foreignKeys }: {
+  connectionId: string; schema: string; table: string; driver?: string; foreignKeys: ForeignKeyDetail[]
+}) {
+  const td = useTableData(connectionId, schema, table, driverToDialect(driver), 200)
+
+  // Lazy: fetch the first time this section mounts.
+  useEffect(() => { td.load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // FK affordances derived from the table's own foreign keys.
+  const fkColumns = new Set<string>()
+  const fkRefs    = new Map<string, { table: string; col: string }>()
+  for (const fk of foreignKeys) {
+    fk.columns.forEach((c, i) => {
+      fkColumns.add(c)
+      if (!fkRefs.has(c)) fkRefs.set(c, { table: `${fk.refSchema}.${fk.refTable}`, col: fk.refColumns[i] ?? fk.refColumns[0] })
+    })
+  }
+
+  const s = td.state
+  if (s.running && !s.data) return <div className="flex items-center justify-center flex-1 gap-2 text-th-dim"><Loader2 size={16} className="animate-spin" />Loading…</div>
+  if (s.error)   return <div className="flex items-center justify-center flex-1 gap-2" style={{ color: 'var(--error-text)' }}><XCircle size={16} />{s.error}</div>
+  if (!s.data)   return null
+
+  const tab: ResultTab = {
+    id: 'tbl-data', title: `${s.schema}.${s.table}`, data: s.data,
+    sortCol: s.sort?.col, sortDir: s.sort?.dir,
+    colFilters: Object.fromEntries(s.filters.map(f => [f.col, f.value])),
+    colFilterOps: Object.fromEntries(s.filters.map(f => [f.col, f.op])),
+    offset: s.offset, hasMore: s.hasMore, loadingMore: s.loadingMore,
+    history: s.history.length ? [{}] : undefined, // non-empty → grid shows the Back button
+  }
+
+  return (
+    <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+      <div className="px-4 py-1.5 text-[11px] text-th-dim shrink-0 flex items-center gap-2" style={{ borderBottom: '1px solid var(--border)', background: 'var(--sidebar-bg)' }}>
+        <span className="font-semibold">{s.schema}.{s.table}</span>
+        <span>{s.data.rows.length} row{s.data.rows.length !== 1 ? 's' : ''}{s.hasMore ? '+' : ''}</span>
+      </div>
+      <ResultTable
+        result={s.data}
+        tab={tab}
+        fkColumns={fkColumns}
+        fkRefs={fkRefs}
+        onSort={(col, dir) => td.setSort(col, dir)}
+        onColumnFilter={(col, value, op) => td.setFilter(col, value, op)}
+        onFkClick={(refTable, refCol, value) => td.fkClick(refTable, refCol, value)}
+        onBack={() => td.back()}
+        onLoadMore={() => td.loadMore()}
+      />
     </div>
   )
 }
