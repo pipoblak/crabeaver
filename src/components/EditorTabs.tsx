@@ -9,6 +9,7 @@ import TableDetailsTab from '@/components/TableDetailsTab'
 import SchemaDetailsTab from '@/components/SchemaDetailsTab'
 import ResultsPane, { type QueryResult, type ResultTab } from '@/components/ResultsPane'
 import ResizeHandle from '@/components/ResizeHandle'
+import { applyLimit, buildFilterPredicate, quoteIdent, driverToDialect } from '@/lib/queryBuilder'
 
 interface Connection { id: string; name: string; driver: string; database: string }
 
@@ -145,20 +146,6 @@ export default function EditorTabs() {
   }, [active?.connectionId])
 
   // ── Limit helper ──────────────────────────────────────────────────────────
-  const applyLimit = (sql: string, limit: number): string => {
-    if (limit <= 0) return sql
-    const s = sql.trim().replace(/;\s*$/, '').trimEnd()
-    if (!/^(SELECT|WITH)\b/i.test(s)) return sql
-    let depth = 0, stripped = ''
-    for (const ch of s) {
-      if (ch === '(') { depth++; stripped += ' ' }
-      else if (ch === ')') { depth = Math.max(0, depth - 1); stripped += ' ' }
-      else stripped += depth > 0 ? ' ' : ch
-    }
-    if (/\bLIMIT\b/i.test(stripped)) return sql
-    return `${s}\nLIMIT ${limit}`
-  }
-
   // ── Ensure result tabs exist, return target tab id ────────────────────────
   const ensureResultTab = useCallback((
     tabId: number,
@@ -288,7 +275,7 @@ export default function EditorTabs() {
     const offset = rt.offset ?? 0
 
     let newSql = rt.baseSql.trim().replace(/;\s*$/, '').trimEnd()
-    if (rt.sortCol) newSql += `\nORDER BY ${rt.sortCol} ${(rt.sortDir ?? 'asc').toUpperCase()}`
+    if (rt.sortCol) newSql += `\nORDER BY ${quoteIdent(rt.sortCol)} ${(rt.sortDir ?? 'asc').toUpperCase()}`
     if (limit > 0) newSql += `\nLIMIT ${limit} OFFSET ${offset}`
 
     setResultMap(prev => {
@@ -342,7 +329,7 @@ export default function EditorTabs() {
 
     const limit = editorTab.queryLimit ?? DEFAULT_LIMIT_VAL
     let newSql = base.trim().replace(/;\s*$/, '').trimEnd()
-    if (col) newSql += `\nORDER BY ${col} ${dir.toUpperCase()}`
+    if (col) newSql += `\nORDER BY ${quoteIdent(col)} ${dir.toUpperCase()}`
     if (limit > 0) newSql += `\nLIMIT ${limit}`
 
     // Update sortCol/sortDir optimistically
@@ -404,18 +391,11 @@ export default function EditorTabs() {
     if (!value) delete newOps[col]
 
     const limit = editorTab.queryLimit ?? DEFAULT_LIMIT_VAL
+    const dialect = driverToDialect(connections.find(c => c.id === editorTab.connectionId)?.driver)
     const base  = rt.baseSql.trim().replace(/;\s*$/, '')
     const conditions = Object.entries(newFilters)
       .filter(([, v]) => v.trim())
-      .map(([c, v]) => {
-        const o    = newOps[c] ?? '~'
-        const esc  = v.replace(/'/g, "''")
-        if (o === '~')  return `"${c}"::text ILIKE '%${esc}%'`
-        if (o === '!=') return `"${c}"::text != '${esc}'`
-        if (o === '>')  return `"${c}"::text > '${esc}'`
-        if (o === '<')  return `"${c}"::text < '${esc}'`
-        return `"${c}"::text = '${esc}'`   // '='
-      })
+      .map(([c, v]) => buildFilterPredicate({ col: c, value: v, op: newOps[c] ?? '~' }, dialect))
 
     let newSql: string
     if (conditions.length > 0) {
@@ -425,7 +405,7 @@ export default function EditorTabs() {
       // No filters — run baseSql directly (faster, no subquery overhead)
       newSql = base
     }
-    if (rt.sortCol) newSql += `\nORDER BY "${rt.sortCol}" ${(rt.sortDir ?? 'asc').toUpperCase()}`
+    if (rt.sortCol) newSql += `\nORDER BY ${quoteIdent(rt.sortCol)} ${(rt.sortDir ?? 'asc').toUpperCase()}`
     if (limit > 0) newSql += `\nLIMIT ${limit}`
 
     setResultMap(prev => {
