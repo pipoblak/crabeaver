@@ -156,6 +156,12 @@ pub async fn is_connected(state: &AppState, id: &str) -> bool {
     state.drivers.is_connected_any(id).await
 }
 
+/// Heartbeat: ping the cached pool with `SELECT 1`. Detects server-side drops that
+/// `is_connected` (pool-exists only) misses.
+pub async fn ping(state: &AppState, id: &str) -> bool {
+    state.drivers.ping_any(id).await
+}
+
 // ── Shared: stored row → usable Connection ───────────────────────────────────
 
 /// Load the full connection (with password) for `id`, applying the biometric gate.

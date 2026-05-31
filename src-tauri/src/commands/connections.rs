@@ -73,6 +73,11 @@ pub async fn connection_status(state: State<'_, AppState>, id: String) -> Result
     Ok(app::is_connected(&state, &id).await)
 }
 
+#[tauri::command]
+pub async fn ping_connection(state: State<'_, AppState>, id: String) -> Result<bool, String> {
+    Ok(app::ping(&state, &id).await)
+}
+
 // ── Query execution ────────────────────────────────────────────────────────
 
 #[tauri::command]

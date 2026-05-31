@@ -42,6 +42,12 @@ pub trait DatabaseDriver: Send + Sync {
     /// One-shot connectivity check using a throwaway connection. Never cached.
     async fn test(&self, conn: &Connection) -> Result<(), DriverError>;
 
+    /// Heartbeat: run a cheap `SELECT 1` on the *cached* pool for this id (unlike
+    /// `test`, which spins a throwaway pool). Returns `false` when no live pool is
+    /// cached or the ping query fails — i.e. the connection is effectively dead.
+    /// Used by the frontend's periodic connection check.
+    async fn ping(&self, id: &str) -> bool;
+
     // ── Query ───────────────────────────────────────────────────────────────
 
     /// Execute a statement and return rows or an affected-row count.

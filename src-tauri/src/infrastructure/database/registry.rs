@@ -77,4 +77,15 @@ impl DriverRegistry {
         }
         false
     }
+
+    /// Heartbeat across every driver: `true` if some driver's cached pool for this
+    /// id answers `SELECT 1`. Skips drivers holding no pool (their `ping` is `false`).
+    pub async fn ping_any(&self, id: &str) -> bool {
+        for d in self.all() {
+            if d.ping(id).await {
+                return true;
+            }
+        }
+        false
+    }
 }

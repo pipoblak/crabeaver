@@ -11,7 +11,7 @@ use commands::connectors::connector_capabilities;
 use commands::connections::{
     add_connection, cancel_query, connect, connection_status, delete_connection,
     disconnect, execute_query, get_locks, get_schemas, get_sessions, has_password,
-    list_connections, list_databases, test_connection, update_connection,
+    list_connections, list_databases, ping_connection, test_connection, update_connection,
 };
 use commands::marketplace::{install_theme, search_marketplace};
 use commands::queries::{
@@ -114,7 +114,7 @@ pub fn run() {
             connector_capabilities,
             // Connections
             list_connections, add_connection, update_connection, delete_connection,
-            test_connection, connect, disconnect, connection_status, has_password,
+            test_connection, connect, disconnect, connection_status, ping_connection, has_password,
             execute_query, cancel_query, get_locks, get_schemas, get_sessions, list_databases,
             // Themes / settings
             search_marketplace, install_theme,

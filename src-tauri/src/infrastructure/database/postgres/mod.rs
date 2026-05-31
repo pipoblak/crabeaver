@@ -807,6 +807,18 @@ impl DatabaseDriver for PostgresDriver {
         Ok(())
     }
 
+    async fn ping(&self, id: &str) -> bool {
+        // Clone the cached pool out of the lock so we don't hold it across the await.
+        let pool = {
+            let pools = self.pools.lock().await;
+            pools.iter().find(|((cid, _), p)| cid == id && !p.is_closed()).map(|(_, p)| p.clone())
+        };
+        match pool {
+            Some(pool) => sqlx::query("SELECT 1").execute(&pool).await.is_ok(),
+            None => false,
+        }
+    }
+
     async fn execute(&self, conn: &Connection, sql: &str) -> Result<QueryResult, DriverError> {
         let pool = self.pool(conn).await?;
 

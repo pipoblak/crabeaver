@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useEffect } from 'react'
+import { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 
 interface Connection { id: string; name: string; driver: string; host: string; port: number; database: string }
@@ -46,6 +46,40 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
   }, [])
 
   useEffect(() => { reload() }, [reload])
+
+  // Periodic heartbeat: ping each connected pool with a real `SELECT 1` and drop
+  // any that no longer answer, so the status dot flips offline on a dropped
+  // connection. Pauses while the tab is hidden; fires once on refocus.
+  const connectedRef = useRef(connected)
+  connectedRef.current = connected
+  useEffect(() => {
+    const HEARTBEAT_MS = 30_000
+
+    const beat = async () => {
+      if (document.hidden) return
+      const ids = [...connectedRef.current]
+      if (ids.length === 0) return
+      const alive = await Promise.all(
+        ids.map(id => invoke<boolean>('ping_connection', { id }).catch(() => false))
+      )
+      const dead = ids.filter((_, i) => !alive[i])
+      if (dead.length) {
+        setConnected(prev => {
+          const s = new Set(prev)
+          dead.forEach(id => s.delete(id))
+          return s
+        })
+      }
+    }
+
+    const timer = setInterval(beat, HEARTBEAT_MS)
+    const onVisible = () => { if (!document.hidden) beat() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [])
 
   const connect = useCallback(async (id: string) => {
     await invoke('connect', { id })

@@ -469,6 +469,18 @@ impl DatabaseDriver for SqliteDriver {
         Ok(())
     }
 
+    async fn ping(&self, id: &str) -> bool {
+        // Clone the cached pool out of the lock so we don't hold it across the await.
+        let pool = {
+            let pools = self.pools.lock().await;
+            pools.iter().find(|((cid, _), p)| cid == id && !p.is_closed()).map(|(_, p)| p.clone())
+        };
+        match pool {
+            Some(pool) => sqlx::query("SELECT 1").execute(&pool).await.is_ok(),
+            None => false,
+        }
+    }
+
     async fn execute(&self, conn: &Connection, sql: &str) -> Result<QueryResult, DriverError> {
         let pool = self.pool(conn).await?;
         let sql = sql.trim();
@@ -578,5 +590,36 @@ mod tests {
         assert!(c.schemas && c.table_details && c.list_databases);
         // No server: these are off, so the trait methods must return Unsupported.
         assert!(!c.sessions && !c.locks && !c.cancel);
+    }
+
+    #[tokio::test]
+    async fn ping_tracks_pool_lifecycle() {
+        // An empty (zero-byte) file is a valid empty SQLite database.
+        let path = std::env::temp_dir().join(format!("crabeaver_ping_{}.db", std::process::id()));
+        std::fs::File::create(&path).unwrap();
+        let conn = Connection {
+            id:         "ping-test".into(),
+            name:       "t".into(),
+            driver:     "sqlite".into(),
+            host:       String::new(),
+            port:       0,
+            database:   path.to_string_lossy().into_owned(),
+            username:   String::new(),
+            password:   String::new(),
+            ssl_mode:   String::new(),
+            created_at: String::new(),
+        };
+        let driver = SqliteDriver::new();
+
+        // No cached pool → dead.
+        assert!(!driver.ping(&conn.id).await);
+        // Connected → SELECT 1 succeeds.
+        driver.connect(&conn).await.unwrap();
+        assert!(driver.ping(&conn.id).await);
+        // Disconnected → dead again.
+        driver.disconnect(&conn.id).await;
+        assert!(!driver.ping(&conn.id).await);
+
+        let _ = std::fs::remove_file(&path);
     }
 }
