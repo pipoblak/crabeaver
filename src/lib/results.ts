@@ -15,6 +15,7 @@ export interface ResultTab {
   running?:     boolean
   loadingMore?: boolean
   sql?:         string      // last executed SQL (shown as preview)
+  ranAt?:       number       // epoch ms the result was last fetched (for "fetched Nm ago")
   baseSql?:     string      // SQL without ORDER BY/LIMIT/WHERE — for re-sort, filter, pagination
   sortCol?:     string
   sortDir?:     'asc' | 'desc'

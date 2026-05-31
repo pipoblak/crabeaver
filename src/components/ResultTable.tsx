@@ -6,6 +6,7 @@ import {
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { ChevronUp, ChevronDown, ChevronsUpDown, Loader2, Filter, Link } from 'lucide-react'
 import type { QueryResult, ResultTab } from '@/lib/results'
+import { timeAgo } from '@/lib/timeAgo'
 
 export default function ResultTable({ result, tab, fkColumns, fkRefs, onSort, onColumnFilter, onFkClick, onBack, onLoadMore }: {
   result:          QueryResult
@@ -123,7 +124,7 @@ const loadingRef     = useRef(false)
     return (
       <div className="flex items-center gap-2 p-4 text-[12px] text-th-dim">
         ✓ {result.affectedRows} row{result.affectedRows !== 1 ? 's' : ''} affected
-        <span className="ml-auto">{result.executionMs}ms</span>
+        <span className="ml-auto">{tab.ranAt ? `${timeAgo(tab.ranAt)} · ` : ''}{result.executionMs}ms</span>
       </div>
     )
   }
@@ -142,7 +143,7 @@ const loadingRef     = useRef(false)
         ) : null}
         <span>{total} row{total !== 1 ? 's' : ''}</span>
         <span>{result.columns.length} col{result.columns.length !== 1 ? 's' : ''}</span>
-        <span className="ml-auto">{result.executionMs}ms</span>
+        <span className="ml-auto" title={tab.ranAt ? `fetched ${timeAgo(tab.ranAt)}` : undefined}>{tab.ranAt ? `${timeAgo(tab.ranAt)} · ` : ''}{result.executionMs}ms</span>
         <input value={globalFilter} onChange={e => setGlobalFilter(e.target.value)} placeholder="filter all…"
           className="text-[11px] bg-transparent outline-none"
           style={{ borderBottom: '1px solid var(--border)', color: 'var(--text)', width: 120, padding: '1px 4px' }} />

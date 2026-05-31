@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Plus, Trash2, Plug, PlugZap, Loader2, CheckCircle, XCircle, Fingerprint } from 'lucide-react'
 import { CONNECTORS, descriptorFor } from '@/connectors/registry'
+import { cacheGet, cacheSet, cacheDelete } from '@/lib/cache'
 
 interface Connection {
   id:         string
@@ -70,7 +71,12 @@ export default function ConnectionsSection({ initialConnectionId }: { initialCon
     setIsNew(false)
     setTestResult(null)
     setBioStatus(null)
-    invoke<boolean>('has_password', { id: c.id }).then(setPwdSaved).catch(() => setPwdSaved(false))
+    // Seed from cache for an instant answer, then refresh in the background.
+    const cachedPwd = cacheGet<boolean>('has-password', c.id)
+    if (cachedPwd) setPwdSaved(cachedPwd.data)
+    invoke<boolean>('has_password', { id: c.id })
+      .then(v => { setPwdSaved(v); cacheSet('has-password', c.id, v) })
+      .catch(() => setPwdSaved(false))
   }
 
   const testConnection = async () => {
@@ -101,6 +107,7 @@ export default function ConnectionsSection({ initialConnectionId }: { initialCon
         setConnections(prev => [...prev, saved])
         setSelected(saved)
         setIsNew(false)
+        cacheSet('has-password', saved.id, !!password)
         showToast(true, 'Connection saved.')
       } else if (selected) {
         await invoke('update_connection', {
@@ -108,7 +115,7 @@ export default function ConnectionsSection({ initialConnectionId }: { initialCon
           password: password || null,
         })
         setConnections(prev => prev.map(c => c.id === selected.id ? { ...c, ...connFields } : c))
-        if (form.password) setPwdSaved(true)
+        if (form.password) { setPwdSaved(true); cacheSet('has-password', selected.id, true) }
         showToast(true, 'Connection updated.')
       }
     } catch (e) {
@@ -120,6 +127,7 @@ export default function ConnectionsSection({ initialConnectionId }: { initialCon
 
   const remove = async (id: string) => {
     await invoke('delete_connection', { id }).catch(() => {})
+    cacheDelete('has-password', id)
     setConnections(prev => prev.filter(c => c.id !== id))
     if (selected?.id === id) { setSelected(null); setIsNew(false) }
   }

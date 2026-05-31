@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { X, Database, Play, PlayCircle, Square } from 'lucide-react'
+import { X, Database, Play, PlayCircle, Square, RefreshCw } from 'lucide-react'
+import { timeAgo } from '@/lib/timeAgo'
+import { cacheGet, cacheSet } from '@/lib/cache'
 import { invoke } from '@tauri-apps/api/core'
 import { useTabs } from '@/context/TabsContext'
 import SqlEditor, { type SqlEditorRef } from '@/components/SqlEditor'
@@ -63,7 +65,7 @@ export default function EditorTabs() {
   const [connections, setConnections]  = useState<Connection[]>([])
   const [databases, setDatabases]      = useState<string[]>([])
   const [schemaStatus, setSchemaStatus]= useState<{
-    tables: number; error?: string;
+    tables: number; error?: string; fetchedAt?: number;
     fkColumns?: Set<string>;
     fkRefs?: Map<string, { table: string; col: string }>
   } | null>(null)
@@ -139,10 +141,16 @@ export default function EditorTabs() {
   const showResults = isQueryTab && !!tr
 
   // ── Fetch databases when connection changes ───────────────────────────────
+  // Seed from the shared `databases` cache (also written by the sidebar) for an
+  // instant dropdown, then refresh in the background.
   useEffect(() => {
-    if (!active?.connectionId) { setDatabases([]); return }
-    invoke<string[]>('list_databases', { connectionId: active.connectionId })
-      .then(setDatabases).catch(() => setDatabases([]))
+    const connId = active?.connectionId
+    if (!connId) { setDatabases([]); return }
+    const cached = cacheGet<string[]>('databases', connId)
+    if (cached) setDatabases(cached.data)
+    invoke<string[]>('list_databases', { connectionId: connId })
+      .then(names => { setDatabases(names); cacheSet('databases', connId, names) })
+      .catch(() => { if (!cached) setDatabases([]) })
   }, [active?.connectionId])
 
   // ── Limit helper ──────────────────────────────────────────────────────────
@@ -214,7 +222,7 @@ export default function EditorTabs() {
           ...curr,
           tabs: curr.tabs.map(t => t.id === resultTabId
             ? { ...t, running: false, data: withColumns(data, t.data), error: undefined, sql, baseSql: rawSql,
-                offset: data.rows.length, hasMore, colFilters: undefined, colFilterOps: undefined }
+                ranAt: Date.now(), offset: data.rows.length, hasMore, colFilters: undefined, colFilterOps: undefined }
             : t),
         }
         persistResults(tab.id, next)
@@ -500,7 +508,7 @@ export default function EditorTabs() {
           ...curr,
           tabs: curr.tabs.map(t => t.id === targetId
             ? { ...t, running: false, data: withColumns(data, t.data), sql, baseSql: sql,
-                offset: data.rows.length, hasMore, sortCol: undefined, sortDir: undefined,
+                ranAt: Date.now(), offset: data.rows.length, hasMore, sortCol: undefined, sortDir: undefined,
                 colFilters: undefined, colFilterOps: undefined }
             : t),
         }
@@ -633,8 +641,17 @@ export default function EditorTabs() {
                 </>
               )}
               {active.connectionId && (
-                <span className="text-[10px]" style={{ color: schemaStatus?.error ? 'var(--error-text, #f87171)' : 'var(--text-dim)' }}>
+                <span className="flex items-center gap-1 text-[10px]" style={{ color: schemaStatus?.error ? 'var(--error-text, #f87171)' : 'var(--text-dim)' }}>
                   {schemaStatus?.error ? `⚠ ${schemaStatus.error}` : schemaStatus ? `${schemaStatus.tables} tables` : 'loading…'}
+                  {schemaStatus?.fetchedAt && !schemaStatus.error && (
+                    <span className="text-th-dim">· schema {timeAgo(schemaStatus.fetchedAt)}</span>
+                  )}
+                  {schemaStatus && !schemaStatus.error && (
+                    <button onClick={() => sqlEditorRef.current?.refreshSchema()} title="Refresh schema"
+                      className="text-th-dim hover:text-th-bright transition-colors">
+                      <RefreshCw size={10} />
+                    </button>
+                  )}
                 </span>
               )}
             </>

@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Loader2, XCircle, Table2, Eye, Layers, FunctionSquare, Hash } from 'lucide-react'
 import { descriptorFor } from '@/connectors/registry'
 import type { SchemaObjectKind } from '@/connectors/types'
+import { useCachedResource } from '@/hooks/useCachedResource'
+import CacheFooter from '@/components/CacheFooter'
 
 interface ObjectSummary { name: string; detail?: string }
 interface SchemaDetails {
@@ -30,22 +32,20 @@ const KIND_META: Record<SchemaObjectKind, { label: string; icon: React.ReactNode
 }
 
 export default function SchemaDetailsTab({ connectionId, schema, driver, onOpenTable }: Props) {
-  const [details, setDetails] = useState<SchemaDetails | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError]     = useState<string | null>(null)
+  const { data: details, loading, error, refreshing, staleError, fetchedAt, refresh } =
+    useCachedResource<SchemaDetails>({
+      namespace: 'schema-details',
+      key: connectionId ? `${connectionId}:${schema}` : null,
+      fetcher: () => invoke<SchemaDetails>('get_schema_details', { connectionId, schema }),
+    })
 
   const kinds = descriptorFor(driver).schemaObjectKinds
   const [section, setSection] = useState<SchemaObjectKind>(kinds[0] ?? 'tables')
 
-  useEffect(() => {
-    setLoading(true); setError(null)
-    invoke<SchemaDetails>('get_schema_details', { connectionId, schema })
-      .then(d => { setDetails(d); setLoading(false) })
-      .catch(e => { setError(String(e)); setLoading(false) })
-  }, [connectionId, schema])
-
-  if (loading) return <div className="flex items-center justify-center flex-1 gap-2 text-th-dim"><Loader2 size={16} className="animate-spin" />Loading…</div>
-  if (error)   return <div className="flex items-center justify-center flex-1 gap-2" style={{ color: 'var(--error-text)' }}><XCircle size={16} />{error}</div>
+  // Spinner only on a cold load (no cached data yet); errors are fatal only when
+  // there is nothing to show.
+  if (loading && !details) return <div className="flex items-center justify-center flex-1 gap-2 text-th-dim"><Loader2 size={16} className="animate-spin" />Loading…</div>
+  if (error && !details)   return <div className="flex items-center justify-center flex-1 gap-2" style={{ color: 'var(--error-text)' }}><XCircle size={16} />{error}</div>
   if (!details) return null
 
   const items = details[KIND_META[section].field] as ObjectSummary[]
@@ -99,6 +99,7 @@ export default function SchemaDetailsTab({ connectionId, schema, driver, onOpenT
             </tbody>
           </table>
         </div>
+        <CacheFooter fetchedAt={fetchedAt} refreshing={refreshing} staleError={staleError} onRefresh={refresh} />
       </div>
     </div>
   )

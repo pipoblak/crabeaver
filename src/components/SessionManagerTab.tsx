@@ -3,6 +3,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { RefreshCw, XCircle, Loader2, X } from 'lucide-react'
 import ResizeHandle from '@/components/ResizeHandle'
 import { useResize } from '@/hooks/useResize'
+import { useCachedResource } from '@/hooks/useCachedResource'
+import { timeAgo } from '@/lib/timeAgo'
 
 const PRIV_ERR = '<insufficient privilege>'
 
@@ -46,10 +48,7 @@ const STATE_COLOR: Record<string, string> = {
 }
 
 export default function SessionManagerTab({ connectionId, connectionName }: Props) {
-  const [sessions, setSessions]   = useState<Session[]>([])
   const [selected, setSelected]   = useState<Session | null>(null)
-  const [loading, setLoading]     = useState(false)
-  const [error, setError]         = useState<string | null>(null)
   const [autoRefresh, setAuto]    = useState(false)
   const [refreshInterval, setInterval_] = useState(5000)
   const [detailW, setDetailW]     = useState(256)
@@ -60,19 +59,17 @@ export default function SessionManagerTab({ connectionId, connectionName }: Prop
   useResize(detailW, onDetailResize, 'horizontal', 160, 500)
   useResize(sqlH, (h) => setSqlH(h), 'vertical', 60, 300)
 
-  const load = useCallback(async () => {
-    setLoading(true); setError(null)
-    try {
-      const data = await invoke<Session[]>('get_sessions', { connectionId })
-      setSessions(data)
-    } catch (e) {
-      setError(String(e))
-    } finally {
-      setLoading(false)
-    }
-  }, [connectionId])
-
-  useEffect(() => { load() }, [load])
+  // Live monitor: show the last snapshot instantly on reopen, refresh in the
+  // background. Short TTL so a reopen within ~15s won't even hit the wire.
+  const { data, error, loading, refreshing, staleError, fetchedAt, refresh } =
+    useCachedResource<Session[]>({
+      namespace: 'sessions',
+      key: connectionId,
+      fetcher: () => invoke<Session[]>('get_sessions', { connectionId }),
+      softTtlMs: 15_000,
+    })
+  const sessions = data ?? []
+  const load = refresh
 
   useEffect(() => {
     if (!autoRefresh) return
@@ -97,7 +94,10 @@ export default function SessionManagerTab({ connectionId, connectionName }: Prop
         <span className="text-[13px] font-medium text-th-text">Sessions</span>
         <span className="text-[11px] text-th-dim">— {connectionName}</span>
         <div className="ml-auto flex items-center gap-2">
-          <span className="text-[11px] text-th-dim">{sessions.length} sessions</span>
+          <span className="text-[11px] text-th-dim">
+            {sessions.length} sessions
+            {fetchedAt && <span> · as of {timeAgo(fetchedAt)}</span>}
+          </span>
           <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-th-dim">
             <input type="checkbox" checked={autoRefresh} onChange={e => setAuto(e.target.checked)}
               className="w-3 h-3 accent-[var(--tab-accent)]" />
@@ -118,20 +118,20 @@ export default function SessionManagerTab({ connectionId, connectionName }: Prop
               <option value={300000}>5 min</option>
             </select>
           )}
-          <button onClick={load} disabled={loading} title="Refresh"
+          <button onClick={load} disabled={loading || refreshing} title="Refresh"
             className="flex items-center gap-1.5 px-2 py-1 rounded text-[12px] transition-colors text-th-dim hover:text-th-text"
             style={{ border: '1px solid var(--border)' }}>
-            {loading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+            {loading || refreshing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
             Refresh
           </button>
         </div>
       </div>
 
-      {/* Error */}
-      {error && (
+      {/* Error — fatal (no snapshot) or a failed background refresh over a stale one */}
+      {(error || staleError) && (
         <div className="mx-4 mt-2 px-3 py-2 rounded text-[12px] flex items-center gap-2"
           style={{ background: 'var(--error-bg)', color: 'var(--error-text)' }}>
-          <XCircle size={13} /> {error}
+          <XCircle size={13} /> {error ?? `Refresh failed: ${staleError}`}
         </div>
       )}
 

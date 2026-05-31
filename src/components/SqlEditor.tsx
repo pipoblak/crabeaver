@@ -86,6 +86,8 @@ async function fetchSchema(connectionId: string, database?: string): Promise<Sch
 export interface SqlEditorRef {
   /** Returns the text of the statement under the cursor, or selected text if any. */
   getStatementAtCursor(): Promise<string | null>
+  /** Force a schema refetch (bypasses the cache TTL), keeping current schema usable. */
+  refreshSchema(): void
 }
 
 interface Props {
@@ -97,7 +99,7 @@ interface Props {
   /** Stable per-query key (the file path) used to persist + restore scroll position. */
   scrollKey?: string
   database?: string
-  onSchemaStatus?: (status: { tables: number; error?: string; fkColumns?: Set<string>; fkRefs?: Map<string, { table: string; col: string }> } | null) => void
+  onSchemaStatus?: (status: { tables: number; error?: string; fetchedAt?: number; fkColumns?: Set<string>; fkRefs?: Map<string, { table: string; col: string }> } | null) => void
   onRunQuery?: (sql: string, newTab: boolean) => void
   /** Cmd/Ctrl+click on a known schema/table identifier opens its details tab. */
   onOpenObject?: (target: ResolveTarget) => void
@@ -127,6 +129,9 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
   const [primedKey, setPrimedKey] = useState<string | null>(null)
   const { validate, resetCache } = useSqlValidation(monaco, editorRef, editorReady, primedKey, driver)
   const schemaCacheRef    = useRef<SchemaCache | null>(null)
+  // Set by the schema-fetch effect to a closure that forces a refetch for the
+  // current connection/database; null when no connection is selected.
+  const refreshSchemaRef  = useRef<(() => void) | null>(null)
 
   const monacoThemeName  = `crabeaver-${theme.name.replace(/[^a-z0-9]/gi, '-').toLowerCase()}`
   const onRunQueryRef    = useRef(onRunQuery)
@@ -231,6 +236,7 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
   useEffect(() => {
     if (!connectionId) {
       schemaCacheRef.current = null
+      refreshSchemaRef.current = null
       setPrimedKey(null)
       onSchemaStatus?.(null)
       return
@@ -253,7 +259,7 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
           }
         }
       }
-      onSchemaStatus?.({ tables: fresh.tables.length, fkColumns, fkRefs })
+      onSchemaStatus?.({ tables: fresh.tables.length, fetchedAt: fresh.fetchedAt, fkColumns, fkRefs })
       // Prime the Rust schema index only when this version isn't already primed —
       // avoids re-sending the full table list on tab switches / cache hits.
       if (primedVersions.get(cacheKey) === fresh.fetchedAt) {
@@ -272,6 +278,9 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
       console.error('[schema fetch]', e)
       onSchemaStatus?.({ tables: 0, error: String(e) })
     }
+
+    // Expose a forced refetch (ignores TTL) for the manual refresh control.
+    refreshSchemaRef.current = () => { fetchSchema(connectionId, database).then(apply).catch(fail) }
 
     const cached = schemaCache.get(cacheKey) ?? loadFromStorage(connectionId, database)
     if (cached) {
@@ -702,6 +711,7 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
       )
       return stmt?.text.trim() ?? null
     },
+    refreshSchema() { refreshSchemaRef.current?.() },
   }), [])
 
   // ── Suggest override CSS ──────────────────────────────────────────────────

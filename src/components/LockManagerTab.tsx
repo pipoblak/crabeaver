@@ -1,7 +1,9 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { RefreshCw, XCircle, Loader2, X } from 'lucide-react'
 import ResizeHandle from '@/components/ResizeHandle'
+import { useCachedResource } from '@/hooks/useCachedResource'
+import { timeAgo } from '@/lib/timeAgo'
 
 interface Lock {
   pid:             number
@@ -50,25 +52,24 @@ const COLS = [
 ]
 
 export default function LockManagerTab({ connectionId, connectionName }: Props) {
-  const [locks, setLocks]         = useState<Lock[]>([])
   const [selected, setSelected]   = useState<Lock | null>(null)
-  const [loading, setLoading]     = useState(false)
-  const [error, setError]         = useState<string | null>(null)
   const [autoRefresh, setAuto]    = useState(false)
   const [interval_, setInterval_] = useState(5000)
   const [detailW, setDetailW]     = useState(240)
   const [sqlH, setSqlH]           = useState(110)
   const [hideShare, setHideShare] = useState(true)
 
-  const load = useCallback(async () => {
-    setLoading(true); setError(null)
-    try {
-      setLocks(await invoke<Lock[]>('get_locks', { connectionId }))
-    } catch (e) { setError(String(e)) }
-    finally { setLoading(false) }
-  }, [connectionId])
+  // Live monitor: last snapshot instantly on reopen, background-refresh.
+  const { data, error, loading, refreshing, staleError, fetchedAt, refresh } =
+    useCachedResource<Lock[]>({
+      namespace: 'locks',
+      key: connectionId,
+      fetcher: () => invoke<Lock[]>('get_locks', { connectionId }),
+      softTtlMs: 15_000,
+    })
+  const locks = data ?? []
+  const load = refresh
 
-  useEffect(() => { load() }, [load])
   useEffect(() => {
     if (!autoRefresh) return
     const t = setInterval(load, interval_)
@@ -103,6 +104,7 @@ export default function LockManagerTab({ connectionId, connectionName }: Props) 
         <div className="ml-auto flex items-center gap-2">
           <span className="text-[11px]" style={{ color: blocked > 0 ? '#ef4444' : 'var(--text-dim)' }}>
             {total} lock{total !== 1 ? 's' : ''}{blocked > 0 ? ` · ${blocked} blocked` : ''}
+            {fetchedAt && <span className="text-th-dim"> · as of {timeAgo(fetchedAt)}</span>}
           </span>
           <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-th-dim">
             <input type="checkbox" checked={hideShare} onChange={e => setHideShare(e.target.checked)}
@@ -125,17 +127,17 @@ export default function LockManagerTab({ connectionId, connectionName }: Props) 
               <option value={60000}>1 min</option>
             </select>
           )}
-          <button onClick={load} disabled={loading} className="flex items-center gap-1.5 px-2 py-1 rounded text-[12px] transition-colors text-th-dim hover:text-th-text"
+          <button onClick={load} disabled={loading || refreshing} className="flex items-center gap-1.5 px-2 py-1 rounded text-[12px] transition-colors text-th-dim hover:text-th-text"
             style={{ border: '1px solid var(--border)' }}>
-            {loading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Refresh
+            {loading || refreshing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Refresh
           </button>
         </div>
       </div>
 
-      {error && (
+      {(error || staleError) && (
         <div className="mx-4 mt-2 px-3 py-2 rounded text-[12px] flex items-center gap-2"
           style={{ background: 'var(--error-bg)', color: 'var(--error-text)', flexShrink: 0 }}>
-          <XCircle size={13} /> {error}
+          <XCircle size={13} /> {error ?? `Refresh failed: ${staleError}`}
         </div>
       )}
 

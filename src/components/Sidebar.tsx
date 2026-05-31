@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useConnections } from '@/context/ConnectionContext'
 import { capabilitiesFor, descriptorFor } from '@/connectors/registry'
+import { cacheGet, cacheSet, cacheDelete } from '@/lib/cache'
+import { timeAgo } from '@/lib/timeAgo'
 import {
   Plus, ChevronRight, ChevronDown, Plug, PlugZap, Loader2, RefreshCw,
   Table2, Database, FolderOpen, Folder, Settings,
@@ -22,9 +24,12 @@ interface Props {
 type LoadState = 'idle' | 'loading' | 'refreshing' | 'done' | 'error'
 
 interface ConnectionTree {
-  databases:    { names: string[]; state: LoadState; error?: string }
-  schemas:      Record<string, { data: SchemaInfo[]; state: LoadState; error?: string }>
+  databases:    { names: string[]; state: LoadState; error?: string; fetchedAt?: number }
+  schemas:      Record<string, { data: SchemaInfo[]; state: LoadState; error?: string; fetchedAt?: number }>
 }
+
+const dbCacheKey = (connId: string) => connId
+const schemaCacheKey = (connId: string, dbName: string) => `${connId}:${dbName}`
 
 function StatusBar({ status }: { status: string }) {
   const [show, setShow] = useState(false)
@@ -101,17 +106,25 @@ export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
       } finally { setLoad(c.id, false) }
     }
 
-    // Load databases if not loaded
+    // Load databases if not loaded. Seed from cache for an instant paint, then
+    // always background-refresh.
     const tree = treeFor(c.id)
     if (tree.databases.state === 'idle') {
-      updateTree(c.id, t => ({ ...t, databases: { names: [], state: 'loading' } }))
+      const cached = cacheGet<string[]>('databases', dbCacheKey(c.id))
+      if (cached) {
+        updateTree(c.id, t => ({ ...t, databases: { names: cached.data, state: 'refreshing', fetchedAt: cached.fetchedAt } }))
+      } else {
+        updateTree(c.id, t => ({ ...t, databases: { names: [], state: 'loading' } }))
+      }
       setStatus(`Loading databases for ${c.name}…`)
       try {
         const names = await invoke<string[]>('list_databases', { connectionId: c.id })
-        updateTree(c.id, t => ({ ...t, databases: { names, state: 'done' } }))
+        const entry = cacheSet('databases', dbCacheKey(c.id), names)
+        updateTree(c.id, t => ({ ...t, databases: { names, state: 'done', fetchedAt: entry.fetchedAt } }))
         setStatus(`${c.name}: ${names.length} database${names.length !== 1 ? 's' : ''}`)
       } catch (e) {
-        updateTree(c.id, t => ({ ...t, databases: { names: [], state: 'error', error: String(e) } }))
+        // Keep cached names visible on a refresh failure.
+        updateTree(c.id, t => ({ ...t, databases: { names: t.databases.names, state: 'error', error: String(e), fetchedAt: t.databases.fetchedAt } }))
         setStatus(`Error: ${String(e)}`)
       }
     }
@@ -127,15 +140,21 @@ export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
     toggle(key)
     const tree = treeFor(connId)
     if (tree.schemas[dbName]?.state === 'done') return
-    updateTree(connId, t => ({ ...t, schemas: { ...t.schemas, [dbName]: { data: [], state: 'loading' } } }))
+    const cached = cacheGet<SchemaInfo[]>('schemas', schemaCacheKey(connId, dbName))
+    if (cached) {
+      updateTree(connId, t => ({ ...t, schemas: { ...t.schemas, [dbName]: { data: cached.data, state: 'refreshing', fetchedAt: cached.fetchedAt } } }))
+    } else {
+      updateTree(connId, t => ({ ...t, schemas: { ...t.schemas, [dbName]: { data: [], state: 'loading' } } }))
+    }
     setStatus(`Loading schemas…`)
     try {
       const data = await invoke<SchemaInfo[]>('get_schemas', { connectionId: connId })
-      updateTree(connId, t => ({ ...t, schemas: { ...t.schemas, [dbName]: { data, state: 'done' } } }))
+      const entry = cacheSet('schemas', schemaCacheKey(connId, dbName), data)
+      updateTree(connId, t => ({ ...t, schemas: { ...t.schemas, [dbName]: { data, state: 'done', fetchedAt: entry.fetchedAt } } }))
       const total = data.reduce((n, s) => n + s.tables.length, 0)
       setStatus(`${total} table${total !== 1 ? 's' : ''} loaded`)
     } catch (e) {
-      updateTree(connId, t => ({ ...t, schemas: { ...t.schemas, [dbName]: { data: [], state: 'error', error: String(e) } } }))
+      updateTree(connId, t => ({ ...t, schemas: { ...t.schemas, [dbName]: { data: t.schemas[dbName]?.data ?? [], state: 'error', error: String(e), fetchedAt: t.schemas[dbName]?.fetchedAt } } }))
       setStatus(`Error: ${String(e)}`)
     }
   }
@@ -147,7 +166,8 @@ export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
     setStatus(`Refreshing databases for ${connName}…`)
     try {
       const names = await invoke<string[]>('list_databases', { connectionId: connId })
-      updateTree(connId, t => ({ ...t, databases: { names, state: 'done' } }))
+      const entry = cacheSet('databases', dbCacheKey(connId), names)
+      updateTree(connId, t => ({ ...t, databases: { names, state: 'done', fetchedAt: entry.fetchedAt } }))
       setStatus(`${connName}: ${names.length} database${names.length !== 1 ? 's' : ''}`)
     } catch (e) {
       updateTree(connId, t => ({ ...t, databases: { ...t.databases, state: 'error', error: String(e) } }))
@@ -161,11 +181,12 @@ export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
     setStatus(`Refreshing schemas…`)
     try {
       const data = await invoke<SchemaInfo[]>('get_schemas', { connectionId: connId })
-      updateTree(connId, t => ({ ...t, schemas: { ...t.schemas, [dbName]: { data, state: 'done' } } }))
+      const entry = cacheSet('schemas', schemaCacheKey(connId, dbName), data)
+      updateTree(connId, t => ({ ...t, schemas: { ...t.schemas, [dbName]: { data, state: 'done', fetchedAt: entry.fetchedAt } } }))
       const total = data.reduce((n, s) => n + s.tables.length, 0)
       setStatus(`${total} table${total !== 1 ? 's' : ''} loaded`)
     } catch (e) {
-      updateTree(connId, t => ({ ...t, schemas: { ...t.schemas, [dbName]: { ...(t.schemas[connId] ?? { data: [] }), state: 'error', error: String(e) } } }))
+      updateTree(connId, t => ({ ...t, schemas: { ...t.schemas, [dbName]: { ...(t.schemas[dbName] ?? { data: [] }), state: 'error', error: String(e) } } }))
       setStatus(`Error: ${String(e)}`)
     }
   }
@@ -177,6 +198,11 @@ export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
       if (connected.has(c.id)) {
         setStatus(`Disconnecting…`)
         await ctxDisconnect(c.id)
+        // Drop cached tree for this connection so a reconnect doesn't paint a
+        // tree from a dead session.
+        const dead = treeFor(c.id)
+        cacheDelete('databases', dbCacheKey(c.id))
+        for (const db of dead.databases.names) cacheDelete('schemas', schemaCacheKey(c.id, db))
         setTrees(prev => { const t = { ...prev }; delete t[c.id]; return t })
         setExpanded(prev => {
           const s = new Set(prev)
@@ -203,10 +229,10 @@ export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
     finally { setLoad(c.id, false) }
   }
 
-  const Row = ({ depth, icon, label, expanded: exp, onClick, loading: spin, refreshing, onRefresh }: {
+  const Row = ({ depth, icon, label, expanded: exp, onClick, loading: spin, refreshing, onRefresh, fetchedAt }: {
     depth: number; icon: React.ReactNode; label: string
     expanded?: boolean; onClick?: () => void; loading?: boolean
-    refreshing?: boolean; onRefresh?: (e: React.MouseEvent) => void
+    refreshing?: boolean; onRefresh?: (e: React.MouseEvent) => void; fetchedAt?: number
   }) => {
     const [hovered, setHovered] = useState(false)
     return (
@@ -226,7 +252,7 @@ export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
         {onRefresh && hovered && (
           <button
             onClick={onRefresh}
-            title="Refresh"
+            title={refreshing ? 'Refreshing…' : fetchedAt ? `Updated ${timeAgo(fetchedAt)} · click to refresh` : 'Refresh'}
             className="text-th-dim hover:text-th-accent transition-colors"
             style={{ flexShrink: 0 }}
           >
@@ -314,10 +340,11 @@ export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
                     expanded={isExpanded(`${c.id}/databases`)}
                     loading={tree.databases.state === 'loading'}
                     refreshing={tree.databases.state === 'refreshing'}
+                    fetchedAt={tree.databases.fetchedAt}
                     onRefresh={tree.databases.state !== 'idle' ? e => refreshDatabases(c.id, c.name, e) : undefined}
                     onClick={() => toggle(`${c.id}/databases`)} />
 
-                  {isExpanded(`${c.id}/databases`) && tree.databases.state === 'done' && (
+                  {isExpanded(`${c.id}/databases`) && (tree.databases.state === 'done' || tree.databases.state === 'refreshing') && (
                     <>
                       {tree.databases.names.map(dbName => {
                         const dbKey  = `${c.id}/db/${dbName}`
@@ -337,10 +364,11 @@ export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
                                   expanded={isExpanded(schKey)}
                                   loading={sch?.state === 'loading'}
                                   refreshing={sch?.state === 'refreshing'}
+                                  fetchedAt={sch?.fetchedAt}
                                   onRefresh={sch?.state === 'done' || sch?.state === 'refreshing' ? e => refreshSchemas(c.id, dbName, e) : undefined}
                                   onClick={() => expandSchemas(c.id, dbName)} />
 
-                                {isExpanded(schKey) && sch?.state === 'done' && sch.data.map(schema => {
+                                {isExpanded(schKey) && (sch?.state === 'done' || sch?.state === 'refreshing') && sch.data.map(schema => {
                                   const sk = `${schKey}/${schema.schema}`
                                   return (
                                     <div key={sk}>

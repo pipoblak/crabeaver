@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Loader2, XCircle, Key, Link, Table2, Code2, Info, Database } from 'lucide-react'
+import { useCachedResource } from '@/hooks/useCachedResource'
+import CacheFooter from '@/components/CacheFooter'
 import ResultTable from '@/components/ResultTable'
 import { useTableData } from '@/hooks/useTableData'
 import { driverToDialect } from '@/lib/queryBuilder'
@@ -28,20 +30,17 @@ const SECTIONS: { id: Section; label: string; icon: React.ReactNode }[] = [
 interface Props { connectionId: string; schema: string; table: string; driver?: string }
 
 export default function TableDetailsTab({ connectionId, schema, table, driver }: Props) {
-  const [details, setDetails] = useState<TableDetails | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError]     = useState<string | null>(null)
+  const { data: details, loading, error, refreshing, staleError, fetchedAt, refresh } =
+    useCachedResource<TableDetails>({
+      namespace: 'table-details',
+      key: connectionId ? `${connectionId}:${schema}:${table}` : null,
+      fetcher: () => invoke<TableDetails>('get_table_details', { connectionId, schema, table }),
+    })
   const [section, setSection] = useState<Section>('columns')
 
-  useEffect(() => {
-    setLoading(true); setError(null)
-    invoke<TableDetails>('get_table_details', { connectionId, schema, table })
-      .then(d => { setDetails(d); setLoading(false) })
-      .catch(e => { setError(String(e)); setLoading(false) })
-  }, [connectionId, schema, table])
-
-  if (loading) return <div className="flex items-center justify-center flex-1 gap-2 text-th-dim"><Loader2 size={16} className="animate-spin" />Loading…</div>
-  if (error)   return <div className="flex items-center justify-center flex-1 gap-2" style={{ color: 'var(--error-text)' }}><XCircle size={16} />{error}</div>
+  // Spinner / fatal error only when there is no cached data to fall back on.
+  if (loading && !details) return <div className="flex items-center justify-center flex-1 gap-2 text-th-dim"><Loader2 size={16} className="animate-spin" />Loading…</div>
+  if (error && !details)   return <div className="flex items-center justify-center flex-1 gap-2" style={{ color: 'var(--error-text)' }}><XCircle size={16} />{error}</div>
   if (!details) return null
 
   return (
@@ -76,6 +75,7 @@ export default function TableDetailsTab({ connectionId, schema, table, driver }:
         {section === 'foreign_keys'&& <ForeignKeysSection items={details.foreignKeys} />}
         {section === 'indexes'     && <IndexesSection items={details.indexes} />}
         {section === 'ddl'         && <DdlSection ddl={details.ddl} />}
+        <CacheFooter fetchedAt={fetchedAt} refreshing={refreshing} staleError={staleError} onRefresh={refresh} />
       </div>
     </div>
   )
