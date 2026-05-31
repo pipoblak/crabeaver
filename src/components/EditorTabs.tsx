@@ -713,7 +713,9 @@ export default function EditorTabs() {
           <LockManagerTab key={active.id} connectionId={active.connectionId} connectionName={active.connectionName ?? active.title} />
         )}
         {active?.type === 'table-details' && active.connectionId && (
-          <TableDetailsTab key={active.id} connectionId={active.connectionId} schema={(active as any).schema ?? 'public'} table={(active as any).table ?? ''} />
+          <TableDetailsTab key={active.id} connectionId={active.connectionId}
+            schema={(active as any).schema ?? 'public'} table={(active as any).table ?? ''}
+            driver={connections.find(c => c.id === active.connectionId)?.driver} />
         )}
         {active?.type === 'schema-details' && active.connectionId && (
           <SchemaDetailsTab
