@@ -10,14 +10,17 @@ import App from './App.tsx'
 import { ThemeProvider } from '@/context/ThemeContext'
 import { ValidationProvider } from '@/context/ValidationContext'
 import { ConnectionProvider } from '@/context/ConnectionContext'
+import { TasksProvider } from '@/context/TasksContext'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ThemeProvider>
       <ValidationProvider>
-        <ConnectionProvider>
-          <App />
-        </ConnectionProvider>
+        <TasksProvider>
+          <ConnectionProvider>
+            <App />
+          </ConnectionProvider>
+        </TasksProvider>
       </ValidationProvider>
     </ThemeProvider>
   </StrictMode>,
