@@ -18,23 +18,24 @@ export function splitStatements(lines: string[]): Statement[] {
   let currentStart = 0
   let prevEndedWithSemi = false
 
-  const flush = (nextStart: number) => {
-    if (current.length) {
-      while (current.length > 0 && current[current.length - 1].trim() === '') current.pop()
-      if (current.length > 0)
-        stmts.push({ start: currentStart, text: current.join('\n'), lineCount: current.length })
-      current = []
-      currentStart = nextStart
-    }
+  const flush = () => {
+    while (current.length > 0 && current[current.length - 1].trim() === '') current.pop()
+    if (current.length > 0)
+      stmts.push({ start: currentStart, text: current.join('\n'), lineCount: current.length })
+    current = []
   }
 
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim()
-    if (i > 0 && (isStatementStart(lines[i]) || prevEndedWithSemi)) flush(i)
+    // A blank line ends the current statement; the blank itself belongs to none.
+    if (trimmed === '') { flush(); prevEndedWithSemi = false; continue }
+    // A new statement-start keyword or a prior `;` also begins a new statement.
+    if (current.length > 0 && (isStatementStart(lines[i]) || prevEndedWithSemi)) flush()
+    if (current.length === 0) currentStart = i
     current.push(lines[i])
     prevEndedWithSemi = trimmed.endsWith(';')
   }
-  flush(lines.length)
+  flush()
   return stmts
 }
 

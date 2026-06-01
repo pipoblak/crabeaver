@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Loader2, XCircle, X, Edit2 } from 'lucide-react'
+import { Loader2, XCircle, X, Edit2, Copy, Check } from 'lucide-react'
 import type { ResultTab } from '@/lib/results'
 export type { QueryResult, ResultTab } from '@/lib/results'
 import ResultTable from '@/components/ResultTable'
@@ -15,6 +15,7 @@ interface Props {
   fkRefs?:        Map<string, { table: string; col: string }>
   onFkClick?:     (resultTabId: string, refTable: string, refCol: string, value: string, newTab: boolean) => void
   onBack?:        (resultTabId: string) => void
+  onForward?:     (resultTabId: string) => void
   onSort:         (resultTabId: string, col: string | null, dir: 'asc' | 'desc') => void
   onColumnFilter: (resultTabId: string, col: string, value: string, op: string) => void
   onLoadMore:     (resultTabId: string) => void
@@ -28,6 +29,18 @@ interface Props {
 function SqlPreview({ sql, tabId, onEdit }: { sql: string; tabId: string; onEdit: (id: string, sql: string) => void }) {
   const [hovered,  setHovered]  = useState(false)
   const [expanded, setExpanded] = useState(false)
+  const [copied,   setCopied]   = useState(false)
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (copyTimer.current) clearTimeout(copyTimer.current) }, [])
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(sql)
+      setCopied(true)
+      if (copyTimer.current) clearTimeout(copyTimer.current)
+      copyTimer.current = setTimeout(() => setCopied(false), 1500)
+    } catch { /* clipboard unavailable */ }
+  }
 
   const preview = sql.replace(/\s+/g, ' ').trim()
   const truncated = preview.length > 120 ? preview.slice(0, 120) + '…' : preview
@@ -38,6 +51,13 @@ function SqlPreview({ sql, tabId, onEdit }: { sql: string; tabId: string; onEdit
       <div className="flex items-center gap-2 px-3" style={{ height: 22, cursor: 'default' }}
         onClick={() => setExpanded(e => !e)}>
         <span className="text-[10px] font-mono text-th-dim truncate flex-1">{truncated}</span>
+        {(hovered || copied) && (
+          <button title={copied ? 'Copied' : 'Copy SQL'}
+            className={`shrink-0 ${copied ? 'text-th-accent' : 'text-th-dim hover:text-th-accent'}`}
+            onClick={e => { e.stopPropagation(); copy() }}>
+            {copied ? <Check size={10} /> : <Copy size={10} />}
+          </button>
+        )}
         {hovered && (
           <button title="Edit SQL" className="text-th-dim hover:text-th-accent shrink-0"
             onClick={e => { e.stopPropagation(); onEdit(tabId, sql) }}>
@@ -60,7 +80,7 @@ function SqlPreview({ sql, tabId, onEdit }: { sql: string; tabId: string; onEdit
 
 export default function ResultsPane({
   tabs, activeId, fkColumns, fkRefs, onSetActive, onCloseTab, onRenameTab, onReorderTab,
-  onFkClick, onBack, onSort, onColumnFilter, onLoadMore, onEditSql, elapsed,
+  onFkClick, onBack, onForward, onSort, onColumnFilter, onLoadMore, onEditSql, elapsed,
 }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
@@ -70,8 +90,10 @@ export default function ResultsPane({
   const dropTarget      = useRef<number | null>(null)
   const onFkClickPRef   = useRef(onFkClick)
   const onBackPRef      = useRef(onBack)
+  const onForwardPRef   = useRef(onForward)
   useEffect(() => { onFkClickPRef.current = onFkClick }, [onFkClick])
   useEffect(() => { onBackPRef.current    = onBack    }, [onBack])
+  useEffect(() => { onForwardPRef.current = onForward }, [onForward])
 
   const activeTab = tabs.find(t => t.id === activeId)
 
@@ -168,38 +190,26 @@ export default function ResultsPane({
         <SqlPreview sql={activeTab.sql} tabId={activeTab.id} onEdit={onEditSql} />
       )}
 
-      {/* Content */}
+      {/* Content — prior results stay visible while a new query runs; the
+          footer bar below shows the running indicator instead of a takeover. */}
       <div className="flex-1 min-h-0 overflow-hidden">
-        {!activeTab || activeTab.running ? (
-          <div className="flex items-center justify-center h-full gap-2 text-th-dim text-[13px]">
-            {activeTab?.running ? (
-              <>
-                <Loader2 size={14} className="animate-spin" />
-                <span>Running…</span>
-                {elapsed.has(activeTab.id) && (
-                  <span className="text-[11px] font-mono">
-                    {((Date.now() - elapsed.get(activeTab.id)!) / 1000).toFixed(1)}s
-                  </span>
-                )}
-              </>
-            ) : (
-              <span className="text-[12px]">Press <kbd className="mx-1 px-1.5 py-0.5 rounded text-[11px]"
-                style={{ background: 'var(--hover)', border: '1px solid var(--border)' }}>⌘↵</kbd>to run</span>
-            )}
-          </div>
-        ) : activeTab.error ? (
+        {activeTab?.error ? (
           <div className="flex items-start gap-2 p-4 text-[12px]" style={{ color: 'var(--error-text, #f87171)' }}>
             <XCircle size={14} className="shrink-0 mt-0.5" />
             <pre className="whitespace-pre-wrap font-mono">{activeTab.error}</pre>
           </div>
-        ) : activeTab.data ? (
+        ) : activeTab?.data ? (
           <ResultTable key={activeTab.id} result={activeTab.data} tab={activeTab}
             fkColumns={fkColumns} fkRefs={fkRefs}
             onSort={(col, dir) => onSort(activeTab.id, col, dir)}
             onColumnFilter={(col, val, op) => onColumnFilter(activeTab.id, col, val, op)}
             onFkClick={(table, col, val, newTab) => onFkClickPRef.current?.(activeTab.id, table, col, val, newTab)}
             onBack={() => onBackPRef.current?.(activeTab.id)}
+            onForward={() => onForwardPRef.current?.(activeTab.id)}
             onLoadMore={activeTab.hasMore !== false ? () => onLoadMore(activeTab.id) : undefined} />
+        ) : activeTab?.running ? (
+          // First run on this tab — no prior results to keep; footer shows progress.
+          <div className="h-full" />
         ) : (
           <div className="flex items-center justify-center h-full text-th-dim text-[12px]">
             Press <kbd className="mx-1 px-1.5 py-0.5 rounded text-[11px]"
@@ -207,6 +217,20 @@ export default function ResultsPane({
           </div>
         )}
       </div>
+
+      {/* Running indicator — lives in the footer, not over the results */}
+      {activeTab?.running && (
+        <div className="shrink-0 flex items-center gap-2 px-3"
+          style={{ height: 22, borderTop: '1px solid var(--border)', background: 'var(--sidebar-bg)' }}>
+          <Loader2 size={11} className="animate-spin" style={{ color: 'var(--tab-accent)' }} />
+          <span className="text-[11px] text-th-dim">Running…</span>
+          {elapsed.has(activeTab.id) && (
+            <span className="text-[10px] font-mono text-th-dim">
+              {((Date.now() - elapsed.get(activeTab.id)!) / 1000).toFixed(1)}s
+            </span>
+          )}
+        </div>
+      )}
     </div>
   )
 }

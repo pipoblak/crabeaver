@@ -50,6 +50,46 @@ describe('useTableData', () => {
     expect(h.current.state.history.length).toBe(0)
   })
 
+  it('back() then forward() round-trips the navigation', async () => {
+    vi.mocked(invoke).mockResolvedValue(result(1))
+    const { result: h } = renderHook(() => useTableData('c1', 'public', 'users', 'postgres', 200))
+    await act(async () => { await h.current.load() })
+    await act(async () => { await h.current.fkClick('public.orders', 'user_id', '7') })
+    expect(h.current.state.table).toBe('orders')
+
+    act(() => { h.current.back() })
+    expect(h.current.state.table).toBe('users')
+    expect(h.current.state.future.length).toBe(1) // back pushed 'orders' onto future
+
+    act(() => { h.current.forward() })
+    expect(h.current.state.table).toBe('orders')
+    expect(h.current.state.history.length).toBe(1)
+    expect(h.current.state.future.length).toBe(0)
+  })
+
+  it('a new fkClick after back() clears the forward stack', async () => {
+    vi.mocked(invoke).mockResolvedValue(result(1))
+    const { result: h } = renderHook(() => useTableData('c1', 'public', 'users', 'postgres', 200))
+    await act(async () => { await h.current.load() })
+    await act(async () => { await h.current.fkClick('public.orders', 'user_id', '7') })
+    act(() => { h.current.back() })
+    expect(h.current.state.future.length).toBe(1)
+
+    // Branching to a new table must drop the forward history.
+    await act(async () => { await h.current.fkClick('public.items', 'sku', 'X') })
+    expect(h.current.state.table).toBe('items')
+    expect(h.current.state.future.length).toBe(0)
+  })
+
+  it('forward() is a no-op with an empty future stack', async () => {
+    vi.mocked(invoke).mockResolvedValue(result(1))
+    const { result: h } = renderHook(() => useTableData('c1', 'public', 'users', 'postgres', 200))
+    await act(async () => { await h.current.load() })
+    act(() => { h.current.forward() })
+    expect(h.current.state.table).toBe('users')
+    expect(h.current.state.future.length).toBe(0)
+  })
+
   it('load() surfaces an error string on failure', async () => {
     vi.mocked(invoke).mockRejectedValueOnce('pool timed out')
     const { result: h } = renderHook(() => useTableData('c1', 'public', 'users', 'postgres', 200))

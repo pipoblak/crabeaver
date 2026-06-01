@@ -114,6 +114,21 @@ function isDark(hex: string): boolean {
   return (0.299 * r + 0.587 * g + 0.114 * b) < 140
 }
 
+// Statement boundary for completion context: a `;` or a blank line (one or
+// more empty/whitespace-only lines). Returns the offset where the statement
+// containing `cursorOffset` begins.
+function statementStartOffset(sql: string, cursorOffset: number): number {
+  const before = sql.slice(0, cursorOffset)
+  let start = before.lastIndexOf(';') + 1   // 0 when no ';'
+  const re = /\n[ \t]*\n/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(before)) !== null) {
+    const after = m.index + m[0].length
+    if (after > start) start = after
+  }
+  return start
+}
+
 const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
   { value, onChange, connectionId, driver, scrollKey, database, onSchemaStatus, onRunQuery, onOpenObject }, ref) {
   const monaco = useMonaco()
@@ -159,18 +174,21 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
       const sel  = editor.getSelection()
       const selectedText = sel && !sel.isEmpty() ? model.getValueInRange(sel) : null
       if (selectedText?.trim()) { cb(selectedText.trim(), newTab); return }
-      // Run statement containing cursor
+      // Run statement containing cursor. Bound it by a `;` OR a blank line in
+      // either direction, matching how the editor splits/highlights statements.
       const pos    = editor.getPosition()
       const offset = pos ? model.getOffsetAt(pos) : 0
       const sql    = model.getValue()
-      const before = sql.slice(0, offset)
       const after  = sql.slice(offset)
-      const semiBack    = before.lastIndexOf(';')
-      const semiForward = after.indexOf(';')
-      const stmt = sql.slice(
-        semiBack >= 0 ? semiBack + 1 : 0,
-        semiForward >= 0 ? offset + semiForward + 1 : sql.length,
-      ).trim()
+      // Start: last `;` or blank line before the cursor (whichever is closer).
+      const start = statementStartOffset(sql, offset)
+      // End: next `;` (inclusive) or next blank line, whichever comes first.
+      let end = sql.length
+      const semiForward  = after.indexOf(';')
+      if (semiForward >= 0) end = offset + semiForward + 1
+      const blankForward = after.search(/\n[ \t]*\n/)
+      if (blankForward >= 0) end = Math.min(end, offset + blankForward)
+      const stmt = sql.slice(start, end).trim()
       if (stmt) cb(stmt, newTab)
     }
 
@@ -364,6 +382,9 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
         const word   = model.getWordUntilPosition(position)
         const offset = model.getOffsetAt(position)
         const sql    = model.getValue()
+        // Statement starts after the last `;` OR blank line before the cursor —
+        // a blank line ends the previous statement's completion context.
+        const stmtStart = statementStartOffset(sql, offset)
         const range  = {
           startLineNumber: position.lineNumber,
           endLineNumber:   position.lineNumber,
@@ -374,23 +395,30 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
         // Get keyword/function/snippet completions + schema flags from Rust,
         // using the active connection's dialect.
         const result = await invoke<CompletionResult>('get_sql_completions', {
-          sql,
-          cursorOffset: offset,
+          sql:          sql.slice(stmtStart),
+          cursorOffset: offset - stmtStart,
           dialect: driverRef.current,
         }).catch(() => ({ items: [], suggestTables: false, suggestColumns: false } as CompletionResult))
 
         const suggestions: monaco_t.languages.CompletionItem[] = []
 
+        // ── `*` right after SELECT (top of the list) ───────────────────────
+        const curStmt = sql.slice(stmtStart, offset)
+        if (/\bSELECT\s+$/i.test(curStmt)) {
+          suggestions.push({
+            label: '*', kind: monaco.languages.CompletionItemKind.Field,
+            insertText: '*', detail: 'all columns',
+            sortText: '0_*', preselect: true, range,
+          })
+        }
+
         // ── Schema completions — only where they make sense ────────────────
         const cache = schemaCacheRef.current
         if (cache) {
-          // Scope everything to the current statement (text after last `;` before cursor).
-          // This prevents previous statements' table refs and aliases from bleeding in.
-          const fullUpToCursor = model.getValueInRange({
-            startLineNumber: 1, startColumn: 1,
-            endLineNumber: position.lineNumber, endColumn: position.column,
-          })
-          const stmtText = fullUpToCursor.slice(fullUpToCursor.lastIndexOf(';') + 1)
+          // Scope everything to the current statement (text after last `;` or
+          // blank line before cursor). Prevents previous statements' table refs
+          // and aliases from bleeding in.
+          const stmtText = sql.slice(stmtStart, offset)
 
           // Paren-stripped current statement for depth-0 extraction
           const stmtDepth0 = (() => {
@@ -790,9 +818,18 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
               const lastChange = e.changes[e.changes.length - 1]
               if (!lastChange) return
               const lastChar = lastChange.text.slice(-1)
-              if (['.', ' ', '(', ',', '\n'].includes(lastChar)) {
-                editor.trigger('content', 'editor.action.triggerSuggest', {})
-              }
+              if (!['.', ' ', '(', ',', '\n'].includes(lastChar)) return
+              // Don't open suggestions on a blank line (e.g. after Enter, or a
+              // leading space). Only trigger when there's real text before the cursor.
+              const model = editor.getModel()
+              const pos   = editor.getPosition()
+              if (!model || !pos) return
+              const lineToCursor = model.getValueInRange({
+                startLineNumber: pos.lineNumber, startColumn: 1,
+                endLineNumber:   pos.lineNumber, endColumn: pos.column,
+              })
+              if (lineToCursor.trim() === '') return
+              editor.trigger('content', 'editor.action.triggerSuggest', {})
             })
 
           }}

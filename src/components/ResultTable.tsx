@@ -4,11 +4,12 @@ import {
   type ColumnDef,
 } from '@tanstack/react-table'
 import { useState, useMemo, useRef, useEffect } from 'react'
-import { ChevronUp, ChevronDown, ChevronsUpDown, Loader2, Filter, Link } from 'lucide-react'
+import { ChevronUp, ChevronDown, ChevronsUpDown, Loader2, Filter, Link, Copy, Check } from 'lucide-react'
 import type { QueryResult, ResultTab } from '@/lib/results'
 import { timeAgo } from '@/lib/timeAgo'
+import { formatResult, type ExportFormat } from '@/lib/clipboardExport'
 
-export default function ResultTable({ result, tab, fkColumns, fkRefs, onSort, onColumnFilter, onFkClick, onBack, onLoadMore }: {
+export default function ResultTable({ result, tab, fkColumns, fkRefs, onSort, onColumnFilter, onFkClick, onBack, onForward, onLoadMore }: {
   result:          QueryResult
   tab:             ResultTab
   fkColumns?:      Set<string>
@@ -17,6 +18,7 @@ export default function ResultTable({ result, tab, fkColumns, fkRefs, onSort, on
   onColumnFilter?: (col: string, value: string, op: string) => void
   onFkClick?:      (refTable: string, refCol: string, value: string, newTab: boolean) => void
   onBack?:         () => void
+  onForward?:      () => void
   onLoadMore?:     () => void
 }) {
   const [globalFilter,   setGlobalFilter]  = useState('')
@@ -25,10 +27,21 @@ export default function ResultTable({ result, tab, fkColumns, fkRefs, onSort, on
   const filterTimers       = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const onColumnFilterRef  = useRef(onColumnFilter)
   const onBackRef          = useRef(onBack)
+  const onForwardRef       = useRef(onForward)
   const onFkClickRef       = useRef(onFkClick)
   useEffect(() => { onColumnFilterRef.current = onColumnFilter }, [onColumnFilter])
   useEffect(() => { onBackRef.current = onBack },             [onBack])
+  useEffect(() => { onForwardRef.current = onForward },       [onForward])
   useEffect(() => { onFkClickRef.current = onFkClick },       [onFkClick])
+
+  // Back/forward shortcuts (⌘/Ctrl + [ and ]) — scoped to the result body so they
+  // never collide with Monaco's outdent (⌘[) while editing. The scroll container
+  // is focusable; clicking the table focuses it.
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
+    if (e.key === '[') { e.preventDefault(); onBackRef.current?.() }
+    else if (e.key === ']') { e.preventDefault(); onForwardRef.current?.() }
+  }
 
   useEffect(() => {
     setLocalFilters(tab.colFilters ?? {})
@@ -42,6 +55,28 @@ export default function ResultTable({ result, tab, fkColumns, fkRefs, onSort, on
     window.addEventListener('click', close)
     return () => window.removeEventListener('click', close)
   }, [filterPopup])
+
+  // Copy-all dropdown (CSV / JSON / Text).
+  const [copyMenu, setCopyMenu] = useState(false)
+  const [copied,   setCopied]   = useState<ExportFormat | null>(null)
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (!copyMenu) return
+    const close = () => setCopyMenu(false)
+    window.addEventListener('click', close)
+    return () => window.removeEventListener('click', close)
+  }, [copyMenu])
+  useEffect(() => () => { if (copiedTimer.current) clearTimeout(copiedTimer.current) }, [])
+
+  const copyAs = async (fmt: ExportFormat) => {
+    setCopyMenu(false)
+    try {
+      await navigator.clipboard.writeText(formatResult(result, fmt))
+      setCopied(fmt)
+      if (copiedTimer.current) clearTimeout(copiedTimer.current)
+      copiedTimer.current = setTimeout(() => setCopied(null), 1500)
+    } catch { /* clipboard unavailable */ }
+  }
   const scrollRef      = useRef<HTMLDivElement>(null)
 const loadingRef     = useRef(false)
   const onLoadMoreRef  = useRef(onLoadMore)
@@ -137,8 +172,15 @@ const loadingRef     = useRef(false)
         {tab.history?.length ? (
           <button onClick={() => onBackRef.current?.()}
             className="flex items-center gap-1 text-th-dim hover:text-th-accent transition-colors text-[11px]"
-            title="Go back">
+            title="Go back (⌘[)">
             ← back
+          </button>
+        ) : null}
+        {tab.future?.length ? (
+          <button onClick={() => onForwardRef.current?.()}
+            className="flex items-center gap-1 text-th-dim hover:text-th-accent transition-colors text-[11px]"
+            title="Go forward (⌘])">
+            forward →
           </button>
         ) : null}
         <span>{total} row{total !== 1 ? 's' : ''}</span>
@@ -147,10 +189,37 @@ const loadingRef     = useRef(false)
         <input value={globalFilter} onChange={e => setGlobalFilter(e.target.value)} placeholder="filter all…"
           className="text-[11px] bg-transparent outline-none"
           style={{ borderBottom: '1px solid var(--border)', color: 'var(--text)', width: 120, padding: '1px 4px' }} />
+        {/* Copy-all dropdown */}
+        <div className="relative shrink-0">
+          <button
+            onClick={e => { e.stopPropagation(); setCopyMenu(o => !o) }}
+            className={`flex items-center gap-1 transition-colors text-[11px] ${copied ? 'text-th-accent' : 'text-th-dim hover:text-th-accent'}`}
+            title="Copy all results">
+            {copied ? <Check size={11} /> : <Copy size={11} />}
+            copy
+          </button>
+          {copyMenu && (
+            <div className="absolute right-0 z-20"
+              style={{ top: '100%', marginTop: 4, background: 'var(--sidebar-bg)', border: '1px solid var(--border)',
+                       borderRadius: 4, boxShadow: '0 4px 12px rgba(0,0,0,0.3)', minWidth: 90, overflow: 'hidden' }}
+              onClick={e => e.stopPropagation()}>
+              {([['csv', 'CSV'], ['json', 'JSON'], ['text', 'Text']] as const).map(([fmt, label]) => (
+                <button key={fmt} onClick={() => copyAs(fmt)}
+                  className="block w-full text-left text-[11px] px-3 py-1 text-th-dim hover:text-th-bright"
+                  style={{ background: 'transparent' }}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--hover)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Table */}
-      <div ref={scrollRef} className="flex-1 overflow-auto" style={{ overscrollBehavior: 'none' }}>
+      <div ref={scrollRef} tabIndex={0} onKeyDown={onKeyDown}
+        className="flex-1 overflow-auto focus:outline-none" style={{ overscrollBehavior: 'none' }}>
         <table className="text-[12px] border-collapse" style={{ width: 'max-content', minWidth: '100%' }}>
           <thead style={{ position: 'sticky', top: 0, zIndex: 2, background: 'var(--sidebar-bg)' }}>
             {table.getHeaderGroups().map(hg => (

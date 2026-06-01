@@ -24,4 +24,7 @@ export interface ResultTab {
   offset?:      number
   hasMore?:     boolean
   history?:     Array<Pick<ResultTab, 'data'|'sql'|'baseSql'|'sortCol'|'sortDir'|'colFilters'|'colFilterOps'|'offset'|'hasMore'>>
+  // Forward stack: states popped off `history` by Back, restorable by Forward.
+  // Cleared whenever a new FK navigation branches the history.
+  future?:      Array<Pick<ResultTab, 'data'|'sql'|'baseSql'|'sortCol'|'sortDir'|'colFilters'|'colFilterOps'|'offset'|'hasMore'>>
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { X, Database, Play, PlayCircle, Square, RefreshCw } from 'lucide-react'
+import { X, Database, Play, PlayCircle, Square, RefreshCw, Keyboard } from 'lucide-react'
 import { timeAgo } from '@/lib/timeAgo'
 import { cacheGet, cacheSet } from '@/lib/cache'
 import { invoke } from '@tauri-apps/api/core'
@@ -11,6 +11,7 @@ import TableDetailsTab from '@/components/TableDetailsTab'
 import SchemaDetailsTab from '@/components/SchemaDetailsTab'
 import ResultsPane, { type QueryResult, type ResultTab } from '@/components/ResultsPane'
 import ResizeHandle from '@/components/ResizeHandle'
+import HotkeysHelp from '@/components/HotkeysHelp'
 import { applyLimit, buildFilterPredicate, quoteIdent, driverToDialect } from '@/lib/queryBuilder'
 
 interface Connection { id: string; name: string; driver: string; database: string }
@@ -71,6 +72,7 @@ export default function EditorTabs() {
   } | null>(null)
   const [resultMap, setResultMap]      = useState<Map<number, TabResults>>(new Map())
   const [cacheWarn, setCacheWarn]      = useState<string | null>(null)
+  const [showHotkeys, setShowHotkeys]  = useState(false)
   // elapsed timer: Map<resultTabId, startMs>
   const [elapsed, setElapsed]          = useState<Map<string, number>>(new Map())
   const elapsedTimer                   = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -206,7 +208,10 @@ export default function EditorTabs() {
         ...curr,
         activeId: resultTabId,
         tabs: curr.tabs.map(t => t.id === resultTabId
-          ? { ...t, running: true, data: undefined, error: undefined, sql, baseSql: rawSql, colFilters: undefined, colFilterOps: undefined }
+          // Keep prior `data` visible while the new query runs — the footer shows
+          // the running indicator instead of a full-screen spinner takeover.
+          // A fresh run starts a new navigation root: drop FK back/forward history.
+          ? { ...t, running: true, error: undefined, sql, baseSql: rawSql, colFilters: undefined, colFilterOps: undefined, history: undefined, future: undefined }
           : t),
       })
     })
@@ -493,7 +498,9 @@ export default function EditorTabs() {
             offset: t.offset, hasMore: t.hasMore,
           }
           return { ...t, running: true, sql,
-            history: snapshot ? [...(t.history ?? []), snapshot] : (t.history ?? []) }
+            history: snapshot ? [...(t.history ?? []), snapshot] : (t.history ?? []),
+            // A new FK branch invalidates any forward history.
+            future: snapshot ? [] : t.future }
         }),
       })
     })
@@ -526,7 +533,15 @@ export default function EditorTabs() {
     }
   }, [tabs, resultMap, showResults, persistResults])
 
-  // ── Back — restore previous state from history ────────────────────────────
+  // Snapshot of a result tab's restorable view state (back/forward stack entry).
+  const snapshotOf = (t: ResultTab) => ({
+    data: t.data, sql: t.sql, baseSql: t.baseSql,
+    sortCol: t.sortCol, sortDir: t.sortDir,
+    colFilters: t.colFilters, colFilterOps: t.colFilterOps,
+    offset: t.offset, hasMore: t.hasMore,
+  })
+
+  // ── Back — restore previous state from history, pushing current onto future ──
   const handleBack = useCallback((editorTabId: number, resultTabId: string) => {
     setResultMap(prev => {
       const curr = prev.get(editorTabId)
@@ -538,7 +553,26 @@ export default function EditorTabs() {
       const next: TabResults = {
         ...curr,
         tabs: curr.tabs.map(t => t.id === resultTabId
-          ? { ...t, ...prevState, running: false, history }
+          ? { ...t, ...prevState, running: false, history, future: [...(t.future ?? []), snapshotOf(t)] }
+          : t),
+      }
+      return new Map(prev).set(editorTabId, next)
+    })
+  }, [])
+
+  // ── Forward — restore a state popped by Back, pushing current back onto history ──
+  const handleForward = useCallback((editorTabId: number, resultTabId: string) => {
+    setResultMap(prev => {
+      const curr = prev.get(editorTabId)
+      if (!curr) return prev
+      const rt = curr.tabs.find(t => t.id === resultTabId)
+      if (!rt?.future?.length) return prev
+      const future    = [...rt.future]
+      const nextState = future.pop()!
+      const next: TabResults = {
+        ...curr,
+        tabs: curr.tabs.map(t => t.id === resultTabId
+          ? { ...t, ...nextState, running: false, history: [...(t.history ?? []), snapshotOf(t)], future }
           : t),
       }
       return new Map(prev).set(editorTabId, next)
@@ -616,6 +650,10 @@ export default function EditorTabs() {
         })}
         <button onClick={openQueryTab}
           className="flex items-center justify-center w-9 h-9 shrink-0 text-lg transition-colors rounded-none text-th-dim hover:text-th-text hover:bg-th-hover">+</button>
+        <button onClick={() => setShowHotkeys(true)} title="Keyboard shortcuts"
+          className="flex items-center justify-center w-9 h-9 shrink-0 ml-auto transition-colors rounded-none text-th-dim hover:text-th-text hover:bg-th-hover">
+          <Keyboard size={16} strokeWidth={1.5} />
+        </button>
       </div>
 
       {/* Connection + run bar */}
@@ -774,6 +812,7 @@ export default function EditorTabs() {
                     fkRefs={schemaStatus?.fkRefs}
                     onFkClick={(resultTabId, table, col, val, newTab) => handleFkClick(active.id, resultTabId, table, col, val, newTab)}
                     onBack={resultTabId => handleBack(active.id, resultTabId)}
+                    onForward={resultTabId => handleForward(active.id, resultTabId)}
                     onSort={(resultTabId, col, dir) => handleSort(active.id, resultTabId, col, dir)}
                     onColumnFilter={(resultTabId, col, val, op) => handleColumnFilter(active.id, resultTabId, col, val, op)}
                     onEditSql={(_resultTabId, sql) => handleEditSql(active.id, sql)}
@@ -786,6 +825,8 @@ export default function EditorTabs() {
           </>
         )}
       </div>
+
+      {showHotkeys && <HotkeysHelp onClose={() => setShowHotkeys(false)} />}
     </div>
   )
 }

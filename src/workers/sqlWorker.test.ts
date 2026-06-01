@@ -41,6 +41,48 @@ describe('sqlWorker splitter — pathological input', () => {
   })
 })
 
+describe('sqlWorker splitter — blank line is a statement boundary', () => {
+  it('a blank line ends a statement even without a semicolon', () => {
+    // The reported bug: SELECT on line 1, blank line 2, a stray "S" on line 3.
+    // The blank must split them so "S" is its own statement, not part of SELECT.
+    const stmts = splitStatements([
+      `SELECT * FROM business_user WHERE user_id = 'x'`,
+      '',
+      'S',
+    ])
+    expect(stmts.length).toBe(2)
+    expect(stmts[0].start).toBe(0)
+    expect(stmts[0].lineCount).toBe(1)
+    expect(stmts[1].start).toBe(2)
+    expect(stmts[1].text).toBe('S')
+  })
+
+  it('whitespace-only lines also split', () => {
+    const stmts = splitStatements(['SELECT 1', '   ', 'SELECT 2'])
+    expect(stmts.length).toBe(2)
+    expect(stmts[1].start).toBe(2)
+  })
+
+  it('multiple blank lines collapse to a single boundary with correct start', () => {
+    const stmts = splitStatements(['SELECT 1', '', '', '', 'SELECT 2'])
+    expect(stmts.length).toBe(2)
+    expect(stmts[0].start).toBe(0)
+    expect(stmts[1].start).toBe(4)
+  })
+
+  it('does not split a multi-line statement with no blank line', () => {
+    const stmts = splitStatements(['SELECT a,', '       b', 'FROM t'])
+    expect(stmts.length).toBe(1)
+    expect(stmts[0].lineCount).toBe(3)
+  })
+
+  it('leading blank lines do not create a phantom statement or skew start', () => {
+    const stmts = splitStatements(['', '', 'SELECT 1'])
+    expect(stmts.length).toBe(1)
+    expect(stmts[0].start).toBe(2)
+  })
+})
+
 describe('getViewportStatements — viewport coverage', () => {
   // A 10-line statement (lines 1-10, 0-indexed start 0). Viewport shows lines
   // 4-8 — the user scrolled into the BODY of the statement, its start is above.

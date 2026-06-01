@@ -14,8 +14,12 @@ export interface TableDataState {
   filters: ColFilter[]
   offset: number
   hasMore: boolean
-  history: Array<Omit<TableDataState, 'history' | 'running' | 'loadingMore'>>
+  history: Snapshot[]
+  // Forward stack: states popped off `history` by back(), restorable by forward().
+  future: Snapshot[]
 }
+
+type Snapshot = Omit<TableDataState, 'history' | 'future' | 'running' | 'loadingMore'>
 
 export interface UseTableData {
   state: TableDataState
@@ -25,10 +29,11 @@ export interface UseTableData {
   setFilter: (col: string, value: string, op: string) => Promise<void>
   fkClick: (refTable: string, refCol: string, value: string) => Promise<void>
   back: () => void
+  forward: () => void
 }
 
 const initial = (schema: string, table: string): TableDataState => ({
-  schema, table, running: false, loadingMore: false, filters: [], offset: 0, hasMore: false, history: [],
+  schema, table, running: false, loadingMore: false, filters: [], offset: 0, hasMore: false, history: [], future: [],
 })
 
 export function useTableData(
@@ -52,7 +57,7 @@ export function useTableData(
   }, [connectionId, limit, dialect])
 
   const load = useCallback(async () => {
-    await run({ ...initial(ref.current.schema, ref.current.table), sort: ref.current.sort, filters: ref.current.filters, history: ref.current.history })
+    await run({ ...initial(ref.current.schema, ref.current.table), sort: ref.current.sort, filters: ref.current.filters, history: ref.current.history, future: ref.current.future })
   }, [run])
 
   const loadMore = useCallback(async () => {
@@ -89,12 +94,13 @@ export function useTableData(
     const dot = refTable.indexOf('.')
     const nextSchema = dot >= 0 ? refTable.slice(0, dot) : s.schema
     const nextTable  = dot >= 0 ? refTable.slice(dot + 1) : refTable
-    const { history: _h, running: _r, loadingMore: _l, ...snapshot } = s
+    const { history: _h, future: _f, running: _r, loadingMore: _l, ...snapshot } = s
     await run({
       schema: nextSchema, table: nextTable,
       sort: undefined, filters: [{ col: refCol, value, op: '=' }],
       running: false, loadingMore: false, offset: 0, hasMore: false,
-      history: [...s.history, snapshot],
+      // A new branch invalidates any forward history.
+      history: [...s.history, snapshot], future: [],
     })
   }, [run])
 
@@ -103,9 +109,20 @@ export function useTableData(
       if (!s.history.length) return s
       const history = [...s.history]
       const prev = history.pop()!
-      return { ...prev, running: false, loadingMore: false, history }
+      const { history: _h, future: _f, running: _r, loadingMore: _l, ...cur } = s
+      return { ...prev, running: false, loadingMore: false, history, future: [...s.future, cur] }
     })
   }, [])
 
-  return { state, load, loadMore, setSort, setFilter, fkClick, back }
+  const forward = useCallback(() => {
+    setState(s => {
+      if (!s.future.length) return s
+      const future = [...s.future]
+      const next = future.pop()!
+      const { history: _h, future: _f, running: _r, loadingMore: _l, ...cur } = s
+      return { ...next, running: false, loadingMore: false, history: [...s.history, cur], future }
+    })
+  }, [])
+
+  return { state, load, loadMore, setSort, setFilter, fkClick, back, forward }
 }

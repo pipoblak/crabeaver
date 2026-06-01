@@ -332,6 +332,9 @@ function Input({ value, onChange, type = 'text', placeholder, highlight }: {
       value={value}
       onChange={onChange}
       placeholder={placeholder}
+      autoCapitalize="off"
+      autoCorrect="off"
+      spellCheck={false}
       style={{ width: '100%', height: 32, padding: '0 10px', fontSize: 13, borderRadius: 4, background: 'var(--sidebar-bg)', border: `1px solid ${highlight ? 'var(--error-text, #f87171)' : 'var(--border)'}`, color: 'var(--text)', outline: 'none' }}
       onFocus={e => (e.currentTarget.style.borderColor = 'var(--tab-accent)')}
       onBlur={e => (e.currentTarget.style.borderColor = highlight ? 'var(--error-text, #f87171)' : 'var(--border)')}

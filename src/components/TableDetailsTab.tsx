@@ -269,6 +269,7 @@ function TableDataSection({ connectionId, schema, table, driver, foreignKeys }: 
     colFilterOps: Object.fromEntries(s.filters.map(f => [f.col, f.op])),
     offset: s.offset, hasMore: s.hasMore, loadingMore: s.loadingMore,
     history: s.history.length ? [{}] : undefined, // non-empty → grid shows the Back button
+    future:  s.future.length  ? [{}] : undefined, // non-empty → grid shows the Forward button
   }
 
   return (
@@ -286,6 +287,7 @@ function TableDataSection({ connectionId, schema, table, driver, foreignKeys }: 
         onColumnFilter={(col, value, op) => td.setFilter(col, value, op)}
         onFkClick={(refTable, refCol, value) => td.fkClick(refTable, refCol, value)}
         onBack={() => td.back()}
+        onForward={() => td.forward()}
         onLoadMore={() => td.loadMore()}
       />
     </div>
