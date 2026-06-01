@@ -46,6 +46,8 @@ export default function ResultTable({ result, tab, fkColumns, fkRefs, onSort, on
     // ⌘/Ctrl+C copies selected rows (only when rows are selected — otherwise let
     // the browser copy any highlighted text).
     if (e.key === 'c' && hasSelection) { e.preventDefault(); copySelected() }
+    // ⌘/Ctrl+A selects every row in the result (clears any cell selection).
+    if (e.key === 'a') { e.preventDefault(); setSelected(new Set(rows.map(r => r.id))); setSelCells(new Set()) }
     if (e.shiftKey) return
     if (e.key === '[') { e.preventDefault(); onBackRef.current?.() }
     else if (e.key === ']') { e.preventDefault(); onForwardRef.current?.() }
