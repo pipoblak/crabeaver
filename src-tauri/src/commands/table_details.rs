@@ -5,6 +5,7 @@ use tauri::State;
 
 use crate::application::introspection;
 use crate::domain::models::schema_details::SchemaDetails;
+use crate::domain::models::schema_size::SchemaSizes;
 use crate::domain::models::table_details::TableDetails;
 use crate::infrastructure::database::AppState;
 
@@ -27,6 +28,17 @@ pub async fn get_schema_details(
     schema:        String,
 ) -> Result<SchemaDetails, String> {
     introspection::schema_details(&state, &connection_id, &schema)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn get_schema_sizes(
+    state:         State<'_, AppState>,
+    connection_id: String,
+    database:      Option<String>,
+) -> Result<Vec<SchemaSizes>, String> {
+    introspection::schema_sizes(&state, &connection_id, database)
         .await
         .map_err(Into::into)
 }

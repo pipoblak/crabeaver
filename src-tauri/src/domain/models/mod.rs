@@ -3,5 +3,6 @@ pub mod language;
 pub mod query;
 pub mod schema;
 pub mod schema_details;
+pub mod schema_size;
 pub mod session;
 pub mod table_details;

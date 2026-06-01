@@ -93,6 +93,8 @@ pub struct Capabilities {
     pub list_databases: bool,
     pub table_details:  bool,
     pub schema_details: bool,
+    /// Engine can report per-table on-disk sizes (sidebar size badges).
+    pub table_sizes:    bool,
     pub sessions:       bool,
     pub locks:          bool,
     pub cancel:         bool,

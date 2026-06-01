@@ -12,6 +12,7 @@ use crate::domain::models::connection::Connection;
 use crate::domain::models::query::{ColumnInfo, QueryResult};
 use crate::domain::models::schema::{SchemaInfo, TableInfo};
 use crate::domain::models::schema_details::{ObjectSummary, SchemaDetails};
+use crate::domain::models::schema_size::SchemaSizes;
 use crate::domain::models::session::{Lock, Session};
 use crate::domain::models::table_details::{
     ColumnDetail, ConstraintDetail, ForeignKeyDetail, IndexDetail, TableDetails, TableProperties,
@@ -427,8 +428,10 @@ impl DatabaseDriver for SqliteDriver {
             list_databases: true,
             table_details:  true,
             schema_details: true,
-            // SQLite is an embedded file: no server-side sessions/locks views and
-            // no remote query cancellation.
+            // SQLite is an embedded file: no server-side sessions/locks views,
+            // no remote query cancellation, and no cheap per-table size (would
+            // need the optional dbstat virtual table).
+            table_sizes:    false,
             sessions:       false,
             locks:          false,
             cancel:         false,
@@ -557,6 +560,10 @@ impl DatabaseDriver for SqliteDriver {
     async fn schema_details(&self, conn: &Connection, schema: &str) -> Result<SchemaDetails, DriverError> {
         let pool = self.pool(conn).await?;
         Self::schema_details_impl(&pool, schema).await
+    }
+
+    async fn schema_sizes(&self, _conn: &Connection) -> Result<Vec<SchemaSizes>, DriverError> {
+        Err(DriverError::Unsupported("SQLite does not expose per-table sizes".into()))
     }
 
     async fn sessions(&self, _conn: &Connection) -> Result<Vec<Session>, DriverError> {

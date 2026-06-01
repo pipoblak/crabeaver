@@ -4,6 +4,7 @@ import { useConnections } from '@/context/ConnectionContext'
 import { capabilitiesFor, descriptorFor } from '@/connectors/registry'
 import { cacheGet, cacheSet, cacheDelete } from '@/lib/cache'
 import { timeAgo } from '@/lib/timeAgo'
+import { formatBytes } from '@/lib/formatBytes'
 import {
   Plus, ChevronRight, ChevronDown, Plug, PlugZap, Loader2, RefreshCw,
   Table2, Database, FolderOpen, Folder, Settings,
@@ -14,6 +15,20 @@ interface Connection { id: string; name: string; driver: string; host: string; p
 interface ColumnInfo  { name: string; typeName: string }
 interface TableInfo   { name: string; columns: ColumnInfo[] }
 interface SchemaInfo  { schema: string; tables: TableInfo[] }
+interface TableSize   { name: string; bytes: number }
+interface SchemaSizes { schema: string; totalBytes: number; tables: TableSize[] }
+/** Per-database size lookup: schema → { total, table-name → bytes }. */
+type SizeIndex = Record<string, { total: number; byTable: Record<string, number> }>
+
+function indexSizes(rows: SchemaSizes[]): SizeIndex {
+  const out: SizeIndex = {}
+  for (const s of rows) {
+    const byTable: Record<string, number> = {}
+    for (const t of s.tables) byTable[t.name] = t.bytes
+    out[s.schema] = { total: s.totalBytes, byTable }
+  }
+  return out
+}
 
 interface Props {
   openSettings?: (section?: string, connectionId?: string) => void
@@ -63,6 +78,25 @@ export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
   const [expanded, setExpanded]       = useState(new Set<string>()) // generic set of node keys
   const [trees, setTrees]             = useState<Record<string, ConnectionTree>>({})
   const [status, setStatus]           = useState('')
+  // Per-database table/schema sizes, keyed by `${connId}:${db}`. Loaded eagerly
+  // when a database's schema list opens, cached + background-refreshed.
+  const [sizes, setSizes]             = useState<Record<string, SizeIndex>>({})
+
+  // Fetch on-disk sizes for a database (all its schemas at once). Gated on the
+  // engine's `tableSizes` capability; cached so reopen paints instantly.
+  const loadSizes = (connId: string, dbName: string) => {
+    const driver = connections.find(c => c.id === connId)?.driver
+    if (!driver || !capabilitiesFor(driver).tableSizes) return
+    const key = schemaCacheKey(connId, dbName)
+    const cached = cacheGet<SchemaSizes[]>('schema-sizes', key)
+    if (cached) setSizes(prev => ({ ...prev, [key]: indexSizes(cached.data) }))
+    invoke<SchemaSizes[]>('get_schema_sizes', { connectionId: connId, database: dbName })
+      .then(rows => {
+        cacheSet('schema-sizes', key, rows)
+        setSizes(prev => ({ ...prev, [key]: indexSizes(rows) }))
+      })
+      .catch(() => { /* sizes are best-effort; tree still works without them */ })
+  }
 
   const setLoad = (id: string, on: boolean) =>
     setLoading(prev => { const s = new Set(prev); on ? s.add(id) : s.delete(id); return s })
@@ -137,7 +171,9 @@ export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
 
   const expandSchemas = async (connId: string, dbName: string) => {
     const key = `${connId}/schemas/${dbName}`
+    const willExpand = !isExpanded(key)
     toggle(key)
+    if (willExpand) loadSizes(connId, dbName)
     const tree = treeFor(connId)
     if (tree.schemas[dbName]?.state === 'done') return
     const cached = cacheGet<SchemaInfo[]>('schemas', schemaCacheKey(connId, dbName))
@@ -177,6 +213,7 @@ export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
 
   const refreshSchemas = async (connId: string, dbName: string, e: React.MouseEvent) => {
     e.stopPropagation()
+    loadSizes(connId, dbName)
     updateTree(connId, t => ({ ...t, schemas: { ...t.schemas, [dbName]: { ...(t.schemas[dbName] ?? { data: [] }), state: 'refreshing' } } }))
     setStatus(`Refreshing schemas…`)
     try {
@@ -202,7 +239,15 @@ export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
         // tree from a dead session.
         const dead = treeFor(c.id)
         cacheDelete('databases', dbCacheKey(c.id))
-        for (const db of dead.databases.names) cacheDelete('schemas', schemaCacheKey(c.id, db))
+        for (const db of dead.databases.names) {
+          cacheDelete('schemas', schemaCacheKey(c.id, db))
+          cacheDelete('schema-sizes', schemaCacheKey(c.id, db))
+        }
+        setSizes(prev => {
+          const next = { ...prev }
+          for (const k of Object.keys(next)) { if (k.startsWith(`${c.id}:`)) delete next[k] }
+          return next
+        })
         setTrees(prev => { const t = { ...prev }; delete t[c.id]; return t })
         setExpanded(prev => {
           const s = new Set(prev)
@@ -229,10 +274,12 @@ export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
     finally { setLoad(c.id, false) }
   }
 
-  const Row = ({ depth, icon, label, expanded: exp, onClick, loading: spin, refreshing, onRefresh, fetchedAt }: {
+  const Row = ({ depth, icon, label, expanded: exp, onClick, loading: spin, refreshing, onRefresh, fetchedAt, trailing }: {
     depth: number; icon: React.ReactNode; label: string
     expanded?: boolean; onClick?: () => void; loading?: boolean
     refreshing?: boolean; onRefresh?: (e: React.MouseEvent) => void; fetchedAt?: number
+    /** Dim right-aligned text (e.g. a size badge). Hidden while the refresh button shows. */
+    trailing?: string
   }) => {
     const [hovered, setHovered] = useState(false)
     return (
@@ -249,6 +296,9 @@ export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
         </span>
         <span className="shrink-0 text-th-dim">{icon}</span>
         <span className="text-[12px] text-th-text truncate flex-1">{label}</span>
+        {trailing && !(onRefresh && hovered) && (
+          <span className="shrink-0 text-[10px] text-th-dim tabular-nums">{trailing}</span>
+        )}
         {onRefresh && hovered && (
           <button
             onClick={onRefresh}
@@ -368,17 +418,23 @@ export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
                                   onRefresh={sch?.state === 'done' || sch?.state === 'refreshing' ? e => refreshSchemas(c.id, dbName, e) : undefined}
                                   onClick={() => expandSchemas(c.id, dbName)} />
 
-                                {isExpanded(schKey) && (sch?.state === 'done' || sch?.state === 'refreshing') && sch.data.map(schema => {
+                                {isExpanded(schKey) && (sch?.state === 'done' || sch?.state === 'refreshing') && (() => {
+                                  const sizeIdx = sizes[schemaCacheKey(c.id, dbName)]
+                                  return sch.data.map(schema => {
                                   const sk = `${schKey}/${schema.schema}`
+                                  const schemaSize = sizeIdx?.[schema.schema]
                                   return (
                                     <div key={sk}>
                                       <Row depth={4} icon={<Folder size={10} />} label={schema.schema}
-                                        expanded={isExpanded(sk)} onClick={() => toggle(sk)} />
+                                        expanded={isExpanded(sk)} onClick={() => toggle(sk)}
+                                        trailing={schemaSize ? formatBytes(schemaSize.total) : undefined} />
                                       {isExpanded(sk) && schema.tables.map(tbl => {
                                         const tk = `${sk}/${tbl.name}`
+                                        const tblBytes = schemaSize?.byTable[tbl.name]
                                         return (
                                           <div key={tk}>
                                             <Row depth={5} icon={<Table2 size={10} />} label={tbl.name}
+                                              trailing={tblBytes != null ? formatBytes(tblBytes) : undefined}
                                               onClick={() => openTab?.('table-details', `${tbl.name}`, {
                                                 connectionId: c.id,
                                                 connectionName: c.name,
@@ -390,7 +446,7 @@ export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
                                       })}
                                     </div>
                                   )
-                                })}
+                                }) })()}
                                 {isExpanded(schKey) && sch?.state === 'error' && (
                                   <div style={{ paddingLeft: 8 + 3 * 12 }} className="text-[11px] text-th-err py-1">{sch.error}</div>
                                 )}

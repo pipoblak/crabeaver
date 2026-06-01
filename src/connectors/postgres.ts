@@ -13,6 +13,7 @@ export const postgres: ConnectorDescriptor = {
     listDatabases: true,
     tableDetails:  true,
     schemaDetails: true,
+    tableSizes:    true,
     sessions:      true,
     locks:         true,
     cancel:        true,

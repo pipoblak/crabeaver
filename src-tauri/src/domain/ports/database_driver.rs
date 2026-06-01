@@ -6,6 +6,7 @@ use crate::domain::models::connection::Connection;
 use crate::domain::models::query::QueryResult;
 use crate::domain::models::schema::SchemaInfo;
 use crate::domain::models::schema_details::SchemaDetails;
+use crate::domain::models::schema_size::SchemaSizes;
 use crate::domain::models::session::{Lock, Session};
 use crate::domain::models::table_details::TableDetails;
 
@@ -82,6 +83,11 @@ pub trait DatabaseDriver: Send + Sync {
         conn:   &Connection,
         schema: &str,
     ) -> Result<SchemaDetails, DriverError>;
+
+    /// On-disk sizes for every table in every (user) schema of the connection's
+    /// database, with a per-schema total. `Unsupported` when
+    /// `capabilities().table_sizes` is false.
+    async fn schema_sizes(&self, conn: &Connection) -> Result<Vec<SchemaSizes>, DriverError>;
 
     // ── Server activity (Postgres-style; optional) ───────────────────────────
 

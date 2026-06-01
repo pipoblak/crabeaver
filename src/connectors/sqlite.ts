@@ -14,6 +14,7 @@ export const sqlite: ConnectorDescriptor = {
     listDatabases: true,
     tableDetails:  true,
     schemaDetails: true,
+    tableSizes:    false,
     sessions:      false,
     locks:         false,
     cancel:        false,

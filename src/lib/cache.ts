@@ -30,6 +30,7 @@ const NAMESPACES: Record<string, NamespaceConfig> = {
   'table-details':  { hardTtlMs: 30 * MIN, persist: true },
   'databases':      { hardTtlMs: 30 * MIN, persist: true },
   'schemas':        { hardTtlMs: 30 * MIN, persist: true },
+  'schema-sizes':   { hardTtlMs: 30 * MIN, persist: true },
   'sessions':       { hardTtlMs: 2 * MIN,  persist: false },
   'locks':          { hardTtlMs: 2 * MIN,  persist: false },
   'has-password':   { hardTtlMs: 24 * HOUR, persist: true },

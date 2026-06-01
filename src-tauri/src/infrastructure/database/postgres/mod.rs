@@ -12,6 +12,7 @@ use crate::domain::models::connection::Connection;
 use crate::domain::models::query::{ColumnInfo, QueryResult};
 use crate::domain::models::schema::{SchemaInfo, TableInfo};
 use crate::domain::models::schema_details::{ObjectSummary, SchemaDetails};
+use crate::domain::models::schema_size::{SchemaSizes, TableSize};
 use crate::domain::models::session::{Lock, Session};
 use crate::domain::models::table_details::{
     ColumnDetail, ConstraintDetail, ForeignKeyDetail, IndexDetail, TableDetails, TableProperties,
@@ -310,6 +311,44 @@ impl PostgresDriver {
                 tables: tables.into_iter().map(|(name, columns)| TableInfo { name, columns }).collect(),
             })
             .collect())
+    }
+
+    /// Per-table total on-disk size (heap + indexes + TOAST) across all user
+    /// schemas, grouped per schema with a running total. One metadata query.
+    async fn schema_sizes_impl(pool: &PgPool) -> Result<Vec<SchemaSizes>, DriverError> {
+        let rows = sqlx::query(
+            "SELECT n.nspname AS schema,
+                    c.relname AS name,
+                    pg_total_relation_size(c.oid)::bigint AS bytes
+             FROM pg_class c
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE c.relkind IN ('r','p')
+               AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')
+             ORDER BY n.nspname, c.relname",
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(query_err)?;
+
+        // Preserve query order (schema, then table) while grouping.
+        let mut out: Vec<SchemaSizes> = Vec::new();
+        for row in rows {
+            let schema: String = row.try_get("schema").unwrap_or_default();
+            let name:   String = row.try_get("name").unwrap_or_default();
+            let bytes:  i64    = row.try_get("bytes").unwrap_or(0);
+            match out.last_mut() {
+                Some(s) if s.schema == schema => {
+                    s.total_bytes += bytes;
+                    s.tables.push(TableSize { name, bytes });
+                }
+                _ => out.push(SchemaSizes {
+                    schema,
+                    total_bytes: bytes,
+                    tables: vec![TableSize { name, bytes }],
+                }),
+            }
+        }
+        Ok(out)
     }
 
     /// Objects in one schema, grouped by kind. Schema name is bound as a
@@ -763,6 +802,7 @@ impl DatabaseDriver for PostgresDriver {
             list_databases: true,
             table_details:  true,
             schema_details: true,
+            table_sizes:    true,
             sessions:       true,
             locks:          true,
             cancel:         true,
@@ -873,6 +913,11 @@ impl DatabaseDriver for PostgresDriver {
     async fn schema_details(&self, conn: &Connection, schema: &str) -> Result<SchemaDetails, DriverError> {
         let pool = self.pool(conn).await?;
         Self::schema_details_impl(&pool, schema).await
+    }
+
+    async fn schema_sizes(&self, conn: &Connection) -> Result<Vec<SchemaSizes>, DriverError> {
+        let pool = self.pool(conn).await?;
+        Self::schema_sizes_impl(&pool).await
     }
 
     async fn sessions(&self, conn: &Connection) -> Result<Vec<Session>, DriverError> {

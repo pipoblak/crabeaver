@@ -11,6 +11,7 @@ export interface Capabilities {
   listDatabases: boolean
   tableDetails:  boolean
   schemaDetails: boolean
+  tableSizes:    boolean
   sessions:      boolean
   locks:         boolean
   cancel:        boolean
