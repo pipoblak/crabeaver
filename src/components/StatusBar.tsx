@@ -3,11 +3,12 @@ import { GitBranch, Database, Loader2, CheckCircle, XCircle, AlertCircle, Chevro
 import { useValidation } from '@/context/ValidationContext'
 import { useTabs } from '@/context/TabsContext'
 import { useConnections } from '@/context/ConnectionContext'
+import ActivityMonitor from '@/components/ActivityMonitor'
 
 export default function StatusBar() {
   const { state, errors, warnings } = useValidation()
   const { tabs, activeId, setTabConnection } = useTabs()
-  const { connections, connected, connect, revalidating } = useConnections()
+  const { connections, connected, connect } = useConnections()
   const active = tabs.find(t => t.id === activeId)
   const isQueryTab = !active?.type || active?.type === 'query'
 
@@ -45,13 +46,7 @@ export default function StatusBar() {
       </div>
 
       <div className="flex items-center gap-3">
-        {/* Revalidating indicator */}
-        {revalidating && (
-          <div className="flex items-center gap-1 opacity-70">
-            <Loader2 size={10} className="animate-spin" />
-            <span>Revalidating…</span>
-          </div>
-        )}
+        <ActivityMonitor />
 
         {/* Connection picker — only on query tabs */}
         {isQueryTab && (
