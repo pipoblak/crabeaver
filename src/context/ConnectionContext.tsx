@@ -7,7 +7,6 @@ interface Connection { id: string; name: string; driver: string; host: string; p
 interface ConnectionContextValue {
   connections:    Connection[]
   connected:      Set<string>
-  revalidating:   boolean          // true while checking connection statuses
   reload:         () => Promise<void>
   connect:        (id: string) => Promise<void>
   disconnect:     (id: string) => Promise<void>
@@ -19,7 +18,7 @@ interface ConnectionContextValue {
 }
 
 const ConnectionContext = createContext<ConnectionContextValue>({
-  connections: [], connected: new Set(), revalidating: false,
+  connections: [], connected: new Set(),
   reload: async () => {}, connect: async () => {}, disconnect: async () => {},
   isConnected: () => false, markConnected: () => {}, connectEpoch: () => 0,
 })
@@ -27,7 +26,6 @@ const ConnectionContext = createContext<ConnectionContextValue>({
 export function ConnectionProvider({ children }: { children: React.ReactNode }) {
   const [connections, setConnections]   = useState<Connection[]>([])
   const [connected, setConnected]       = useState(new Set<string>())
-  const [revalidating, setRevalidating] = useState(false)
   // Bumped per connection on each explicit connect(), so the editor refetches
   // schema (and clears a stale connection error) after a reconnect.
   const [connectEpochs, setConnectEpochs] = useState<Record<string, number>>({})
@@ -35,7 +33,6 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
   const { startTask, endTask } = useTasks()
 
   const reload = useCallback(async () => {
-    setRevalidating(true)
     startTask({ id: 'revalidate', kind: 'connection', label: 'Checking connections', background: true })
     try {
       const list = await invoke<Connection[]>('list_connections').catch(() => [])
@@ -45,7 +42,6 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
       )
       setConnected(new Set(list.filter((_, i) => statuses[i]).map(c => c.id)))
     } finally {
-      setRevalidating(false)
       endTask('revalidate')
     }
   }, [startTask, endTask])
@@ -110,7 +106,7 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
 
   return (
     <ConnectionContext.Provider value={{
-      connections, connected, revalidating,
+      connections, connected,
       reload, connect, disconnect, isConnected, markConnected, connectEpoch,
     }}>
       {children}

@@ -48,7 +48,7 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
 
   const cancelTask = useCallback((id: string) => {
     const task = tasksRef.current.find(t => t.id === id)
-    if (!task?.connectionId) return
+    if (!task?.cancellable || !task.connectionId) return
     // Best-effort: the query's own error path removes the task via endTask.
     invoke('cancel_query', { connectionId: task.connectionId }).catch(() => {})
   }, [])
