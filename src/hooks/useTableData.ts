@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback } from 'react'
-import { invoke } from '@tauri-apps/api/core'
 import type { QueryResult } from '@/lib/results'
 import { buildTableQuery, type Sort, type ColFilter, type Dialect } from '@/lib/queryBuilder'
+import { useTrackedQuery } from '@/hooks/useTrackedQuery'
 
 export interface TableDataState {
   schema: string
@@ -43,18 +43,19 @@ export function useTableData(
   // Latest state for callbacks that read-then-write without re-creating on each change.
   const ref = useRef(state)
   ref.current = state
+  const trackedQuery = useTrackedQuery()
 
   // Run a fresh query for the given schema/table/sort/filters (offset 0).
   const run = useCallback(async (next: TableDataState) => {
     setState({ ...next, running: true, error: undefined })
     const sql = buildTableQuery({ schema: next.schema, table: next.table, sort: next.sort, filters: next.filters, limit, dialect })
     try {
-      const data = await invoke<QueryResult>('execute_query', { connectionId, sql })
+      const data = await trackedQuery({ id: `tabledata:${next.schema}.${next.table}`, label: `${next.schema}.${next.table}`, connectionId, sql })
       setState(s => ({ ...s, running: false, data, offset: data.rows.length, hasMore: limit > 0 && data.rows.length >= limit }))
     } catch (e) {
       setState(s => ({ ...s, running: false, error: String(e) }))
     }
-  }, [connectionId, limit, dialect])
+  }, [connectionId, limit, dialect, trackedQuery])
 
   const load = useCallback(async () => {
     await run({ ...initial(ref.current.schema, ref.current.table), sort: ref.current.sort, filters: ref.current.filters, history: ref.current.history, future: ref.current.future })
@@ -66,7 +67,7 @@ export function useTableData(
     setState(p => ({ ...p, loadingMore: true }))
     const sql = buildTableQuery({ schema: s.schema, table: s.table, sort: s.sort, filters: s.filters, limit, offset: s.offset, dialect })
     try {
-      const data = await invoke<QueryResult>('execute_query', { connectionId, sql })
+      const data = await trackedQuery({ id: `tabledata-more:${s.schema}.${s.table}`, label: `${s.schema}.${s.table} · more`, connectionId, sql })
       setState(p => p.data ? ({
         ...p, loadingMore: false,
         data: { ...data, rows: [...p.data.rows, ...data.rows] },
@@ -75,7 +76,7 @@ export function useTableData(
     } catch {
       setState(p => ({ ...p, loadingMore: false }))
     }
-  }, [connectionId, limit, dialect])
+  }, [connectionId, limit, dialect, trackedQuery])
 
   const setSort = useCallback(async (col: string | null, dir: 'asc' | 'desc') => {
     const s = ref.current

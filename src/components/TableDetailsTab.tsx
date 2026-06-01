@@ -5,7 +5,8 @@ import { useCachedResource } from '@/hooks/useCachedResource'
 import CacheFooter from '@/components/CacheFooter'
 import ResultTable from '@/components/ResultTable'
 import { useTableData } from '@/hooks/useTableData'
-import { driverToDialect } from '@/lib/queryBuilder'
+import { useTrackedQuery } from '@/hooks/useTrackedQuery'
+import { driverToDialect, buildTableQuery } from '@/lib/queryBuilder'
 import type { ResultTab } from '@/lib/results'
 
 interface ColumnDetail { ordinal: number; name: string; dataType: string; nullable: boolean; defaultVal?: string; comment?: string; isPk: boolean; isUnique: boolean }
@@ -243,6 +244,7 @@ function TableDataSection({ connectionId, schema, table, driver, foreignKeys }: 
   connectionId: string; schema: string; table: string; driver?: string; foreignKeys: ForeignKeyDetail[]
 }) {
   const td = useTableData(connectionId, schema, table, driverToDialect(driver), 200)
+  const trackedQuery = useTrackedQuery()
 
   // Lazy: fetch the first time this section mounts.
   useEffect(() => { td.load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -289,6 +291,13 @@ function TableDataSection({ connectionId, schema, table, driver, foreignKeys }: 
         onBack={() => td.back()}
         onForward={() => td.forward()}
         onLoadMore={() => td.loadMore()}
+        fetchAll={() => trackedQuery({
+          id: `export:${s.schema}.${s.table}`,
+          label: `${s.schema}.${s.table} · export`,
+          connectionId,
+          // limit 0 → no LIMIT: the full table (current sort/filters applied).
+          sql: buildTableQuery({ schema: s.schema, table: s.table, sort: s.sort, filters: s.filters, limit: 0, dialect: driverToDialect(driver) }),
+        })}
       />
     </div>
   )
