@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { useTasks } from '@/context/TasksContext'
 
 interface Connection { id: string; name: string; driver: string; host: string; port: number; database: string }
 
@@ -31,8 +32,11 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
   // schema (and clears a stale connection error) after a reconnect.
   const [connectEpochs, setConnectEpochs] = useState<Record<string, number>>({})
 
+  const { startTask, endTask } = useTasks()
+
   const reload = useCallback(async () => {
     setRevalidating(true)
+    startTask({ id: 'revalidate', kind: 'connection', label: 'Checking connections', background: true })
     try {
       const list = await invoke<Connection[]>('list_connections').catch(() => [])
       setConnections(list)
@@ -42,8 +46,9 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
       setConnected(new Set(list.filter((_, i) => statuses[i]).map(c => c.id)))
     } finally {
       setRevalidating(false)
+      endTask('revalidate')
     }
-  }, [])
+  }, [startTask, endTask])
 
   useEffect(() => { reload() }, [reload])
 
@@ -59,16 +64,21 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
       if (document.hidden) return
       const ids = [...connectedRef.current]
       if (ids.length === 0) return
-      const alive = await Promise.all(
-        ids.map(id => invoke<boolean>('ping_connection', { id }).catch(() => false))
-      )
-      const dead = ids.filter((_, i) => !alive[i])
-      if (dead.length) {
-        setConnected(prev => {
-          const s = new Set(prev)
-          dead.forEach(id => s.delete(id))
-          return s
-        })
+      startTask({ id: 'heartbeat', kind: 'connection', label: 'Heartbeat', background: true })
+      try {
+        const alive = await Promise.all(
+          ids.map(id => invoke<boolean>('ping_connection', { id }).catch(() => false))
+        )
+        const dead = ids.filter((_, i) => !alive[i])
+        if (dead.length) {
+          setConnected(prev => {
+            const s = new Set(prev)
+            dead.forEach(id => s.delete(id))
+            return s
+          })
+        }
+      } finally {
+        endTask('heartbeat')
       }
     }
 
