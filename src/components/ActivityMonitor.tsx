@@ -36,18 +36,27 @@ export default function ActivityMonitor() {
 
   const elapsed = (t: Task) => `${((Date.now() - t.startedAt) / 1000).toFixed(1)}s`
 
+  // Latest-started foreground task (startTask appends, so the last is newest).
+  const latest = foreground[foreground.length - 1]
+  const latestText = latest ? (latest.detail ?? latest.label) : ''
+
   return (
     <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen(v => !v)}
         title="Activity"
-        className="flex items-center gap-1 transition-opacity hover:opacity-75"
+        className="flex items-center gap-1 transition-opacity hover:opacity-75 max-w-[320px]"
         style={{ color: foreground.length ? '#fff' : 'rgba(255,255,255,0.55)' }}
       >
         {busy
-          ? <Loader2 size={11} className="animate-spin" />
-          : <Activity size={11} />}
-        {foreground.length > 0 && <span>{foreground.length}</span>}
+          ? <Loader2 size={11} className="animate-spin shrink-0" />
+          : <Activity size={11} className="shrink-0" />}
+        {latest && (
+          <>
+            <span className="truncate font-mono">{latestText}</span>
+            {foreground.length > 1 && <span className="shrink-0 opacity-70">+{foreground.length - 1}</span>}
+          </>
+        )}
       </button>
 
       {open && (
