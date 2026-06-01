@@ -3,6 +3,7 @@ import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from 're
 import { invoke } from '@tauri-apps/api/core'
 import { useTheme } from '@/context/ThemeContext'
 import { useConnections } from '@/context/ConnectionContext'
+import { useTasks } from '@/context/TasksContext'
 import { useSqlValidation } from '@/hooks/useSqlValidation'
 import EditorGutter from '@/components/EditorGutter'
 import { loadScroll, saveScroll } from '@/lib/scroll'
@@ -134,6 +135,7 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
   const monaco = useMonaco()
   const { theme } = useTheme()
   const { markConnected, connectEpoch } = useConnections()
+  const { startTask, endTask } = useTasks()
   const dark = isDark(theme.bg)
   const [editorReady, setEditorReady] = useState(false)
   const [editorInstance, setEditorInstance] = useState<monaco_t.editor.IStandaloneCodeEditor | null>(null)
@@ -263,6 +265,12 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
     const cacheKey = `${connectionId}:${database ?? ''}`
     setPrimedKey(null) // clear stale key until the new index is primed
 
+    const trackedFetch = (cid: string, db?: string) => {
+      const id = `schema:${cid}:${db ?? ''}`
+      startTask({ id, kind: 'schema', label: `Schema · ${db ?? cid}`, background: true })
+      return fetchSchema(cid, db).finally(() => endTask(id))
+    }
+
     const apply = (fresh: SchemaCache) => {
       schemaCacheRef.current = fresh
       const fkColumns = new Set<string>()
@@ -298,27 +306,27 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
     }
 
     // Expose a forced refetch (ignores TTL) for the manual refresh control.
-    refreshSchemaRef.current = () => { fetchSchema(connectionId, database).then(apply).catch(fail) }
+    refreshSchemaRef.current = () => { trackedFetch(connectionId, database).then(apply).catch(fail) }
 
     const cached = schemaCache.get(cacheKey) ?? loadFromStorage(connectionId, database)
     if (cached) {
       schemaCache.set(cacheKey, cached) // warm in-memory cache too
       apply(cached)
       if (Date.now() - cached.fetchedAt > CACHE_TTL_MS) {
-        fetchSchema(connectionId, database).then(apply).catch(fail)
+        trackedFetch(connectionId, database).then(apply).catch(fail)
       }
       return
     }
 
     onSchemaStatus?.(null)
     schemaCache.delete(cacheKey)
-    fetchSchema(connectionId, database).then(apply).catch(e => {
+    trackedFetch(connectionId, database).then(apply).catch(e => {
       schemaCacheRef.current = null
       fail(e)
     })
     // `connectEpoch(...)` in deps: re-run on an explicit reconnect (same
     // connectionId/database) so a stale connection error clears and schema refreshes.
-  }, [connectionId, database, connectionId ? connectEpoch(connectionId) : 0])
+  }, [connectionId, database, connectionId ? connectEpoch(connectionId) : 0, startTask, endTask])
 
   // Schema-aware table validation now runs in Rust (validate_sql_batch, AST walk).
   // The index is primed via set_schema_index in the schema-fetch effect above;
