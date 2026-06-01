@@ -16,7 +16,7 @@ use commands::connections::{
 use commands::marketplace::{install_theme, search_marketplace};
 use commands::queries::{
     delete_query_file, get_queries_dir, list_query_files, read_query_file,
-    rename_query_file, set_queries_dir, write_query_file,
+    rename_query_file, save_to_downloads, set_queries_dir, write_query_file,
 };
 use commands::settings::{delete_theme, get_setting, get_themes, save_theme, set_setting};
 use commands::sql_completion::get_sql_completions;
@@ -124,7 +124,7 @@ pub fn run() {
             get_sql_completions, validate_sql, validate_sql_batch, set_schema_index,
             // Query files
             get_queries_dir, set_queries_dir, list_query_files,
-            read_query_file, write_query_file, delete_query_file, rename_query_file,
+            read_query_file, write_query_file, delete_query_file, rename_query_file, save_to_downloads,
         ])
         .run(tauri::generate_context!())
         .expect("error running tauri app");

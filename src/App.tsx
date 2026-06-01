@@ -5,6 +5,7 @@ import Sidebar from '@/components/Sidebar'
 import EditorTabs from '@/components/EditorTabs'
 import SettingsTab from '@/components/SettingsTab'
 import StatusBar from '@/components/StatusBar'
+import ActivityDock from '@/components/ActivityDock'
 import { TabsProvider, useTabs } from '@/context/TabsContext'
 import type { Tab } from '@/lib/tabs'
 import ResizeHandle from '@/components/ResizeHandle'
@@ -52,6 +53,7 @@ function AppShell() {
           {view === 'settings' && <SettingsTab initialSection={settingsSection} initialConnectionId={settingsConnectionId} />}
         </main>
       </div>
+      <ActivityDock />
       <StatusBar />
     </div>
   )

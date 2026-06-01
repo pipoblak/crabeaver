@@ -1,5 +1,7 @@
-import { createContext, useContext, useState, useCallback, useRef } from 'react'
+import { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+
+const DOCK_SETTING = 'activity_docked'
 
 export type TaskKind = 'query' | 'load-more' | 'schema' | 'connection'
 
@@ -19,6 +21,12 @@ interface TasksContextValue {
   startTask: (task: Omit<Task, 'startedAt'>) => void
   endTask: (id: string) => void
   cancelTask: (id: string) => void
+  // Activity panel placement: floating popover (false) vs docked bottom tab (true).
+  docked: boolean
+  // Whether the panel is currently shown (popover open / dock visible).
+  dockOpen: boolean
+  setDocked: (v: boolean) => void
+  setDockOpen: (v: boolean) => void
 }
 
 // No-op default (matches ConnectionContext): useTasks() outside a provider is a
@@ -28,6 +36,10 @@ const TasksContext = createContext<TasksContextValue>({
   startTask: () => {},
   endTask: () => {},
   cancelTask: () => {},
+  docked: false,
+  dockOpen: false,
+  setDocked: () => {},
+  setDockOpen: () => {},
 })
 
 export function TasksProvider({ children }: { children: React.ReactNode }) {
@@ -53,8 +65,22 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
     invoke('cancel_query', { connectionId: task.connectionId }).catch(() => {})
   }, [])
 
+  // Activity panel dock state. Persisted; when docked, the panel shows on launch.
+  const [docked, setDockedState] = useState(false)
+  const [dockOpen, setDockOpen]  = useState(false)
+  useEffect(() => {
+    invoke<string | null>('get_setting', { key: DOCK_SETTING })
+      .then(v => { if (v === 'true') { setDockedState(true); setDockOpen(true) } })
+      .catch(() => {})
+  }, [])
+  const setDocked = useCallback((v: boolean) => {
+    setDockedState(v)
+    setDockOpen(true) // keep the panel visible across the mode switch
+    invoke('set_setting', { key: DOCK_SETTING, value: v ? 'true' : 'false' }).catch(() => {})
+  }, [])
+
   return (
-    <TasksContext.Provider value={{ tasks, startTask, endTask, cancelTask }}>
+    <TasksContext.Provider value={{ tasks, startTask, endTask, cancelTask, docked, dockOpen, setDocked, setDockOpen }}>
       {children}
     </TasksContext.Provider>
   )

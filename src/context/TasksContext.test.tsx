@@ -54,6 +54,7 @@ describe('TasksContext', () => {
     const { result } = renderHook(() => useTasks(), { wrapper })
     act(() => result.current.startTask({ id: 'schema:c1:', kind: 'schema', label: 'Schema', background: true }))
     act(() => result.current.cancelTask('schema:c1:'))
-    expect(invokeMock).not.toHaveBeenCalled()
+    // Mount reads the dock setting, so assert specifically that no cancel fired.
+    expect(invokeMock).not.toHaveBeenCalledWith('cancel_query', expect.anything())
   })
 })

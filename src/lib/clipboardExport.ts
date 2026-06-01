@@ -48,3 +48,12 @@ export function formatResult(r: QueryResult, fmt: ExportFormat): string {
     case 'text': return toText(r)
   }
 }
+
+const EXT: Record<ExportFormat, string> = { csv: 'csv', json: 'json', text: 'txt' }
+
+// `<title>_<yyyyMMddHHmmss>.<ext>` with the title reduced to filename-safe chars.
+export function exportFilename(title: string, fmt: ExportFormat, now: Date = new Date()): string {
+  const base = (title || 'result').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || 'result'
+  const ts = now.toISOString().slice(0, 19).replace(/[-:T]/g, '')
+  return `${base}_${ts}.${EXT[fmt]}`
+}

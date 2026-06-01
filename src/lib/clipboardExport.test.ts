@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { toCSV, toText, toJSON, formatResult } from './clipboardExport'
+import { toCSV, toText, toJSON, formatResult, exportFilename } from './clipboardExport'
 import type { QueryResult } from './results'
 
 const r: QueryResult = {
@@ -55,5 +55,13 @@ describe('clipboardExport', () => {
     expect(formatResult(r, 'csv')).toBe(toCSV(r))
     expect(formatResult(r, 'json')).toBe(toJSON(r))
     expect(formatResult(r, 'text')).toBe(toText(r))
+  })
+
+  it('exportFilename sanitizes the title and stamps a timestamp + extension', () => {
+    const at = new Date('2026-06-01T13:08:07Z')
+    expect(exportFilename('user verified wallets', 'csv', at)).toBe('user_verified_wallets_20260601130807.csv')
+    expect(exportFilename('public.orders', 'json', at)).toBe('public.orders_20260601130807.json')
+    expect(exportFilename('weird/\\:*name', 'text', at)).toBe('weird_name_20260601130807.txt')
+    expect(exportFilename('', 'csv', at)).toBe('result_20260601130807.csv')
   })
 })

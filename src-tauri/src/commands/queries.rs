@@ -144,6 +144,27 @@ pub async fn delete_query_file(path: String) -> Result<(), String> {
     std::fs::remove_file(&path).map_err(|e| e.to_string())
 }
 
+/// Write exported result data to the user's Downloads directory and return the
+/// full path. `filename` is reduced to a basename (path separators stripped) so a
+/// crafted column/table name can't escape the directory.
+#[tauri::command]
+pub async fn save_to_downloads(
+    app:      AppHandle,
+    filename: String,
+    contents: String,
+) -> Result<String, String> {
+    let dir = app.path().download_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+    let safe = filename.replace(['/', '\\'], "_");
+    let safe = safe.trim();
+    let safe = if safe.is_empty() { "export.txt" } else { safe };
+
+    let path = dir.join(safe);
+    std::fs::write(&path, contents).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
 #[tauri::command]
 pub async fn rename_query_file(old_path: String, new_path: String) -> Result<(), String> {
     std::fs::rename(&old_path, &new_path).map_err(|e| e.to_string())?;

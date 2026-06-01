@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { Loader2, XCircle, X, Edit2, Copy, Check } from 'lucide-react'
-import type { ResultTab } from '@/lib/results'
+import type { ResultTab, QueryResult } from '@/lib/results'
 export type { QueryResult, ResultTab } from '@/lib/results'
 import ResultTable from '@/components/ResultTable'
 
@@ -20,6 +20,8 @@ interface Props {
   onColumnFilter: (resultTabId: string, col: string, value: string, op: string) => void
   onLoadMore:     (resultTabId: string) => void
   onEditSql:    (resultTabId: string, sql: string) => void
+  /** Fetch the full (unlimited) result set for a result tab — used by download. */
+  onFetchAll?:    (resultTabId: string) => Promise<QueryResult>
   elapsed:      Map<string, number>  // resultTabId → start timestamp
 }
 
@@ -80,7 +82,7 @@ function SqlPreview({ sql, tabId, onEdit }: { sql: string; tabId: string; onEdit
 
 export default function ResultsPane({
   tabs, activeId, fkColumns, fkRefs, onSetActive, onCloseTab, onRenameTab, onReorderTab,
-  onFkClick, onBack, onForward, onSort, onColumnFilter, onLoadMore, onEditSql, elapsed,
+  onFkClick, onBack, onForward, onSort, onColumnFilter, onLoadMore, onEditSql, onFetchAll, elapsed,
 }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
@@ -206,6 +208,7 @@ export default function ResultsPane({
             onFkClick={(table, col, val, newTab) => onFkClickPRef.current?.(activeTab.id, table, col, val, newTab)}
             onBack={() => onBackPRef.current?.(activeTab.id)}
             onForward={() => onForwardPRef.current?.(activeTab.id)}
+            fetchAll={onFetchAll ? () => onFetchAll(activeTab.id) : undefined}
             onLoadMore={activeTab.hasMore !== false ? () => onLoadMore(activeTab.id) : undefined} />
         ) : activeTab?.running ? (
           // First run on this tab — no prior results to keep; footer shows progress.

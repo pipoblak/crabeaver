@@ -4,12 +4,13 @@ import {
   type ColumnDef,
 } from '@tanstack/react-table'
 import { useState, useMemo, useRef, useEffect } from 'react'
-import { ChevronUp, ChevronDown, ChevronsUpDown, Loader2, Filter, Link, Copy, Check } from 'lucide-react'
+import { ChevronUp, ChevronDown, ChevronsUpDown, Loader2, Filter, Link, Copy, Check, Download, ExternalLink } from 'lucide-react'
+import { invoke } from '@tauri-apps/api/core'
 import type { QueryResult, ResultTab } from '@/lib/results'
 import { timeAgo } from '@/lib/timeAgo'
-import { formatResult, type ExportFormat } from '@/lib/clipboardExport'
+import { formatResult, exportFilename, type ExportFormat } from '@/lib/clipboardExport'
 
-export default function ResultTable({ result, tab, fkColumns, fkRefs, onSort, onColumnFilter, onFkClick, onBack, onForward, onLoadMore }: {
+export default function ResultTable({ result, tab, fkColumns, fkRefs, onSort, onColumnFilter, onFkClick, onBack, onForward, onLoadMore, fetchAll }: {
   result:          QueryResult
   tab:             ResultTab
   fkColumns?:      Set<string>
@@ -20,6 +21,9 @@ export default function ResultTable({ result, tab, fkColumns, fkRefs, onSort, on
   onBack?:         () => void
   onForward?:      () => void
   onLoadMore?:     () => void
+  /** Fetch the FULL result set (no row limit) for download. Falls back to the
+   *  currently-loaded rows when omitted. */
+  fetchAll?:       () => Promise<QueryResult>
 }) {
   const [globalFilter,   setGlobalFilter]  = useState('')
   const [localFilters,   setLocalFilters]  = useState<Record<string, string>>(tab.colFilters ?? {})
@@ -38,7 +42,11 @@ export default function ResultTable({ result, tab, fkColumns, fkRefs, onSort, on
   // never collide with Monaco's outdent (⌘[) while editing. The scroll container
   // is focusable; clicking the table focuses it.
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
+    if (!(e.metaKey || e.ctrlKey) || e.altKey) return
+    // ⌘/Ctrl+C copies selected rows (only when rows are selected — otherwise let
+    // the browser copy any highlighted text).
+    if (e.key === 'c' && hasSelection) { e.preventDefault(); copySelected() }
+    if (e.shiftKey) return
     if (e.key === '[') { e.preventDefault(); onBackRef.current?.() }
     else if (e.key === ']') { e.preventDefault(); onForwardRef.current?.() }
   }
@@ -76,6 +84,36 @@ export default function ResultTable({ result, tab, fkColumns, fkRefs, onSort, on
       if (copiedTimer.current) clearTimeout(copiedTimer.current)
       copiedTimer.current = setTimeout(() => setCopied(null), 1500)
     } catch { /* clipboard unavailable */ }
+  }
+
+  // Download-all dropdown (CSV / JSON / Text) — fetches the FULL result set.
+  const [downloadMenu, setDownloadMenu] = useState(false)
+  const [downloading,  setDownloading]  = useState(false)
+  const [saved,        setSaved]        = useState<string | null>(null)
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (!downloadMenu) return
+    const close = () => setDownloadMenu(false)
+    window.addEventListener('click', close)
+    return () => window.removeEventListener('click', close)
+  }, [downloadMenu])
+  useEffect(() => () => { if (savedTimer.current) clearTimeout(savedTimer.current) }, [])
+
+  const downloadAs = async (fmt: ExportFormat) => {
+    setDownloadMenu(false)
+    setDownloading(true)
+    setSaved(null)
+    try {
+      const data = fetchAll ? await fetchAll() : result
+      const path = await invoke<string>('save_to_downloads', {
+        filename: exportFilename(tab.title, fmt),
+        contents: formatResult(data, fmt),
+      })
+      setSaved(path)
+      if (savedTimer.current) clearTimeout(savedTimer.current)
+      savedTimer.current = setTimeout(() => setSaved(null), 4000)
+    } catch { /* save failed (e.g. directory unavailable) */ }
+    finally { setDownloading(false) }
   }
   const scrollRef      = useRef<HTMLDivElement>(null)
 const loadingRef     = useRef(false)
@@ -155,6 +193,74 @@ const loadingRef     = useRef(false)
   const rows  = table.getRowModel().rows
   const total = result.rows.length
 
+  // ── Selection ─────────────────────────────────────────────────────────────
+  // Two modes, mutually exclusive: click the row NUMBER to select whole rows
+  // (⌘/Ctrl-click toggles, Shift-click ranges); click a CELL to select that cell
+  // (⌘/Ctrl-click toggles individual cells). Cleared when the result changes.
+  // ⌘/Ctrl+C copies the current selection (rows → TSV grid, cells → values).
+  const [selected, setSelected]   = useState<Set<string>>(new Set())   // row ids
+  const [selCells, setSelCells]   = useState<Set<string>>(new Set())   // `${rowId}::${colId}`
+  const anchorRef = useRef<string | null>(null)
+  useEffect(() => { setSelected(new Set()); setSelCells(new Set()); anchorRef.current = null }, [tab.id, result])
+
+  const cellKey = (rowId: string, colId: string) => `${rowId}::${colId}`
+
+  const selectRow = (e: React.MouseEvent, rowId: string, displayIdx: number) => {
+    setSelCells(new Set())
+    setSelected(prev => {
+      if (e.shiftKey && anchorRef.current !== null) {
+        const a = rows.findIndex(r => r.id === anchorRef.current)
+        if (a >= 0) {
+          const [lo, hi] = a <= displayIdx ? [a, displayIdx] : [displayIdx, a]
+          return new Set(rows.slice(lo, hi + 1).map(r => r.id))
+        }
+      }
+      const next = new Set(prev)
+      if (e.metaKey || e.ctrlKey) {
+        if (next.has(rowId)) next.delete(rowId); else next.add(rowId)
+      } else {
+        next.clear()
+        next.add(rowId)
+      }
+      anchorRef.current = rowId
+      return next
+    })
+  }
+
+  const selectCell = (e: React.MouseEvent, rowId: string, colId: string) => {
+    setSelected(new Set())
+    anchorRef.current = null
+    setSelCells(prev => {
+      const key = cellKey(rowId, colId)
+      const next = new Set(prev)
+      if (e.metaKey || e.ctrlKey) {
+        if (next.has(key)) next.delete(key); else next.add(key)
+      } else {
+        next.clear()
+        next.add(key)
+      }
+      return next
+    })
+  }
+
+  const hasSelection = selected.size > 0 || selCells.size > 0
+  const copySelected = () => {
+    if (selected.size) {
+      const picked = rows.filter(r => selected.has(r.id)).map(r => r.original as unknown[])
+      navigator.clipboard.writeText(formatResult({ ...result, rows: picked }, 'text')).catch(() => {})
+    } else if (selCells.size) {
+      // Copy selected cell values in display order (row-major), tab/newline joined.
+      const colIds = result.columns.map(c => c.name)
+      const lines = rows.flatMap(r => {
+        const vals = colIds
+          .filter(c => selCells.has(cellKey(r.id, c)))
+          .map(c => { const v = (r.original as unknown[])[colIds.indexOf(c)]; return v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v) })
+        return vals.length ? [vals.join('\t')] : []
+      })
+      navigator.clipboard.writeText(lines.join('\n')).catch(() => {})
+    }
+  }
+
   if (result.affectedRows !== undefined && result.affectedRows !== null) {
     return (
       <div className="flex items-center gap-2 p-4 text-[12px] text-th-dim">
@@ -185,6 +291,16 @@ const loadingRef     = useRef(false)
         ) : null}
         <span>{total} row{total !== 1 ? 's' : ''}</span>
         <span>{result.columns.length} col{result.columns.length !== 1 ? 's' : ''}</span>
+        {selected.size > 0 && (
+          <span style={{ color: 'var(--tab-accent)' }} title="⌘C copies selected rows">
+            {selected.size} row{selected.size !== 1 ? 's' : ''} selected
+          </span>
+        )}
+        {selCells.size > 0 && (
+          <span style={{ color: 'var(--tab-accent)' }} title="⌘C copies selected cells">
+            {selCells.size} cell{selCells.size !== 1 ? 's' : ''} selected
+          </span>
+        )}
         <span className="ml-auto" title={tab.ranAt ? `fetched ${timeAgo(tab.ranAt)}` : undefined}>{tab.ranAt ? `${timeAgo(tab.ranAt)} · ` : ''}{result.executionMs}ms</span>
         <input value={globalFilter} onChange={e => setGlobalFilter(e.target.value)} placeholder="filter all…"
           className="text-[11px] bg-transparent outline-none"
@@ -192,7 +308,7 @@ const loadingRef     = useRef(false)
         {/* Copy-all dropdown */}
         <div className="relative shrink-0">
           <button
-            onClick={e => { e.stopPropagation(); setCopyMenu(o => !o) }}
+            onClick={e => { e.stopPropagation(); setDownloadMenu(false); setCopyMenu(o => !o) }}
             className={`flex items-center gap-1 transition-colors text-[11px] ${copied ? 'text-th-accent' : 'text-th-dim hover:text-th-accent'}`}
             title="Copy all results">
             {copied ? <Check size={11} /> : <Copy size={11} />}
@@ -215,6 +331,33 @@ const loadingRef     = useRef(false)
             </div>
           )}
         </div>
+        {/* Download-all dropdown — exports every row (no limit) to Downloads */}
+        <div className="relative shrink-0">
+          <button
+            onClick={e => { e.stopPropagation(); setCopyMenu(false); setDownloadMenu(o => !o) }}
+            disabled={downloading}
+            className="flex items-center gap-1 transition-colors text-[11px] text-th-dim hover:text-th-accent disabled:opacity-50"
+            title={saved ? `Saved to ${saved}` : 'Download all results'}>
+            {downloading ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
+            {saved ? 'saved' : 'download'}
+          </button>
+          {downloadMenu && (
+            <div className="absolute right-0 z-20"
+              style={{ top: '100%', marginTop: 4, background: 'var(--sidebar-bg)', border: '1px solid var(--border)',
+                       borderRadius: 4, boxShadow: '0 4px 12px rgba(0,0,0,0.3)', minWidth: 90, overflow: 'hidden' }}
+              onClick={e => e.stopPropagation()}>
+              {([['csv', 'CSV'], ['json', 'JSON'], ['text', 'Text']] as const).map(([fmt, label]) => (
+                <button key={fmt} onClick={() => downloadAs(fmt)}
+                  className="block w-full text-left text-[11px] px-3 py-1 text-th-dim hover:text-th-bright"
+                  style={{ background: 'transparent' }}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--hover)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Table */}
@@ -224,6 +367,11 @@ const loadingRef     = useRef(false)
           <thead style={{ position: 'sticky', top: 0, zIndex: 2, background: 'var(--sidebar-bg)' }}>
             {table.getHeaderGroups().map(hg => (
               <tr key={hg.id}>
+                {/* Row-number gutter header — shrinks to content */}
+                <th style={{ width: 1, padding: '4px 6px', borderBottom: '1px solid var(--border)',
+                             borderRight: '1px solid var(--border)', textAlign: 'right',
+                             userSelect: 'none', color: 'var(--text-dim)', fontWeight: 600,
+                             fontSize: 10, whiteSpace: 'nowrap', background: 'var(--sidebar-bg)' }}>#</th>
                 {hg.headers.map(h => {
                   const isSort = sortCol === h.column.id
                   return (
@@ -299,8 +447,18 @@ const loadingRef     = useRef(false)
           </thead>
           <tbody>
             {rows.map((row, ri) => (
-              <tr key={row.id} style={{ background: ri % 2 === 0 ? 'transparent' : 'var(--hover)' }}
-                className="hover:bg-th-hover transition-colors">
+              <tr key={row.id}
+                style={{ background: selected.has(row.id)
+                           ? 'color-mix(in srgb, var(--tab-accent) 22%, transparent)'
+                           : ri % 2 === 0 ? 'transparent' : 'var(--hover)' }}>
+                {/* Row number — click selects the whole row */}
+                <td onClick={e => selectRow(e, row.id, ri)}
+                    title="Select row"
+                    style={{ width: 1, padding: '3px 6px', borderBottom: '1px solid var(--border)',
+                             borderRight: '1px solid var(--border)', textAlign: 'right', cursor: 'pointer',
+                             color: 'var(--text-dim)', userSelect: 'none', whiteSpace: 'nowrap', fontSize: 10 }}>
+                  {ri + 1}
+                </td>
                 {row.getVisibleCells().map(cell => {
                   const val    = cell.getValue()
                   const colId  = cell.column.id
@@ -311,18 +469,25 @@ const loadingRef     = useRef(false)
                                 : val === false   ? 'false'
                                 : typeof val === 'object' ? JSON.stringify(val)
                                 : String(val ?? '')
+                  const cellSel = selCells.has(cellKey(row.id, colId))
                   return (
                     <td key={cell.id}
+                      onClick={e => selectCell(e, row.id, colId)}
                       style={{ padding: '3px 10px', borderBottom: '1px solid var(--border)',
                                borderRight: '1px solid var(--border)', whiteSpace: 'nowrap',
-                               maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis',
+                               maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'cell',
+                               background: cellSel ? 'color-mix(in srgb, var(--tab-accent) 30%, transparent)' : undefined,
                                color: val === null ? 'var(--text-dim)' : 'var(--text)' }}>
                       {isFk && fkRef ? (
-                        <span
-                          title={`Go to ${fkRef.table} (⌘click = new tab)`}
-                          style={{ cursor: 'pointer', textDecoration: 'underline dotted', textUnderlineOffset: 2 }}
-                          onClick={e => onFkClickRef.current?.(fkRef.table, fkRef.col, String(val), e.metaKey || e.ctrlKey)}>
-                          {display}
+                        <span className="inline-flex items-center gap-1">
+                          <span>{display}</span>
+                          <button
+                            title={`Go to ${fkRef.table} (⌘click = new tab)`}
+                            className="text-th-dim hover:text-th-accent shrink-0"
+                            style={{ lineHeight: 0 }}
+                            onClick={e => { e.stopPropagation(); onFkClickRef.current?.(fkRef.table, fkRef.col, String(val), e.metaKey || e.ctrlKey) }}>
+                            <ExternalLink size={10} />
+                          </button>
                         </span>
                       ) : display}
                     </td>

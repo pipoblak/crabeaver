@@ -110,7 +110,7 @@ Context detection in `src-tauri/src/infrastructure/language/sql/completion.rs`
 
 - `LIMIT N` auto-appended to SELECT/WITH queries (default 200, per-tab configurable)
 - Pagination via `LIMIT N OFFSET M` — triggered by scroll-to-bottom in result table
-- Results cached in `localStorage` per tab file path, max 2MB
+- Results cached in `localStorage` per tab file path, max 10MB
 
 ### Tab State
 
