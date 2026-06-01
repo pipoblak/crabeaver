@@ -5,7 +5,7 @@ import { cacheGet, cacheSet } from '@/lib/cache'
 import { invoke } from '@tauri-apps/api/core'
 import { useTabs } from '@/context/TabsContext'
 import { useTasks } from '@/context/TasksContext'
-import { useTrackedQuery } from '@/hooks/useTrackedQuery'
+import { useTrackedQuery, sqlPreview } from '@/hooks/useTrackedQuery'
 import SqlEditor, { type SqlEditorRef } from '@/components/SqlEditor'
 import SessionManagerTab from '@/components/SessionManagerTab'
 import LockManagerTab from '@/components/LockManagerTab'
@@ -24,7 +24,7 @@ interface TabResults {
 }
 
 const DEFAULT_LIMIT      = 200
-const CACHE_MAX_BYTES    = 2 * 1024 * 1024   // 2 MB per result tab set — warn above this
+const CACHE_MAX_BYTES    = 10 * 1024 * 1024   // 10 MB per result tab set — warn above this
 const DEFAULT_RESULTS_H  = 240
 const MIN_EDITOR_H       = 80
 const MIN_RESULTS_H      = 60
@@ -233,8 +233,7 @@ export default function EditorTabs() {
     startTask({
       id: `query:${resultTabId}`,
       kind: 'query',
-      label: editorTab.title,
-      detail: rawSql.replace(/\s+/g, ' ').trim().slice(0, 120),
+      label: sqlPreview(rawSql),
       connectionId,
       cancellable: true,
     })
@@ -373,7 +372,7 @@ export default function EditorTabs() {
     startTask({
       id: `load-more:${resultTabId}`,
       kind: 'load-more',
-      label: `${editorTab.title} · more`,
+      label: `${sqlPreview(newSql, 120)} · more`,
       connectionId: editorTab.connectionId,
     })
 
@@ -439,7 +438,7 @@ export default function EditorTabs() {
     beginElapsed(resultTabId)
 
     try {
-      const data = await trackedQuery({ id: `query:${resultTabId}`, label: editorTab.title, connectionId: editorTab.connectionId, sql: newSql })
+      const data = await trackedQuery({ id: `query:${resultTabId}`, connectionId: editorTab.connectionId, sql: newSql })
       setResultMap(prev => {
         const curr = prev.get(editorTabId)
         if (!curr) return prev
@@ -506,7 +505,7 @@ export default function EditorTabs() {
     })
 
     try {
-      const data = await trackedQuery({ id: `query:${resultTabId}`, label: editorTab.title, connectionId: editorTab.connectionId, sql: newSql })
+      const data = await trackedQuery({ id: `query:${resultTabId}`, connectionId: editorTab.connectionId, sql: newSql })
       const hasMore = limit > 0 && data.rows.length >= limit
       setResultMap(prev => {
         const curr = prev.get(editorTabId)
@@ -552,7 +551,7 @@ export default function EditorTabs() {
       : base
     if (rt?.sortCol) sql += `\nORDER BY ${quoteIdent(rt.sortCol)} ${(rt.sortDir ?? 'asc').toUpperCase()}`
     // No LIMIT — the whole result set.
-    return trackedQuery({ id: `export:${resultTabId}`, label: `${editorTab.title} · export`, connectionId: editorTab.connectionId, sql })
+    return trackedQuery({ id: `export:${resultTabId}`, connectionId: editorTab.connectionId, sql })
   }, [tabs, resultMap, connections])
 
   // ── FK cell click → navigate to referenced row ───────────────────────────
@@ -606,7 +605,7 @@ export default function EditorTabs() {
     })
 
     try {
-      const data = await trackedQuery({ id: `query:${targetId}`, label: editorTab.title, connectionId: editorTab.connectionId, sql })
+      const data = await trackedQuery({ id: `query:${targetId}`, connectionId: editorTab.connectionId, sql })
       const hasMore = limit > 0 && data.rows.length >= limit
       setResultMap(prev => {
         const curr = prev.get(editorTabId)

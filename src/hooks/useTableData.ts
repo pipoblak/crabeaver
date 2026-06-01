@@ -50,7 +50,7 @@ export function useTableData(
     setState({ ...next, running: true, error: undefined })
     const sql = buildTableQuery({ schema: next.schema, table: next.table, sort: next.sort, filters: next.filters, limit, dialect })
     try {
-      const data = await trackedQuery({ id: `tabledata:${next.schema}.${next.table}`, label: `${next.schema}.${next.table}`, connectionId, sql })
+      const data = await trackedQuery({ id: `tabledata:${next.schema}.${next.table}`, connectionId, sql })
       setState(s => ({ ...s, running: false, data, offset: data.rows.length, hasMore: limit > 0 && data.rows.length >= limit }))
     } catch (e) {
       setState(s => ({ ...s, running: false, error: String(e) }))
@@ -67,7 +67,7 @@ export function useTableData(
     setState(p => ({ ...p, loadingMore: true }))
     const sql = buildTableQuery({ schema: s.schema, table: s.table, sort: s.sort, filters: s.filters, limit, offset: s.offset, dialect })
     try {
-      const data = await trackedQuery({ id: `tabledata-more:${s.schema}.${s.table}`, label: `${s.schema}.${s.table} · more`, connectionId, sql })
+      const data = await trackedQuery({ id: `tabledata-more:${s.schema}.${s.table}`, connectionId, sql })
       setState(p => p.data ? ({
         ...p, loadingMore: false,
         data: { ...data, rows: [...p.data.rows, ...data.rows] },

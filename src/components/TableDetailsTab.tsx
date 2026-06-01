@@ -293,7 +293,6 @@ function TableDataSection({ connectionId, schema, table, driver, foreignKeys }: 
         onLoadMore={() => td.loadMore()}
         fetchAll={() => trackedQuery({
           id: `export:${s.schema}.${s.table}`,
-          label: `${s.schema}.${s.table} · export`,
           connectionId,
           // limit 0 → no LIMIT: the full table (current sort/filters applied).
           sql: buildTableQuery({ schema: s.schema, table: s.table, sort: s.sort, filters: s.filters, limit: 0, dialect: driverToDialect(driver) }),
