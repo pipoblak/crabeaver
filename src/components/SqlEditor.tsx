@@ -8,6 +8,7 @@ import { useSqlValidation } from '@/hooks/useSqlValidation'
 import EditorGutter from '@/components/EditorGutter'
 import { loadScroll, saveScroll } from '@/lib/scroll'
 import { resolveIdentifier, type ResolveTarget } from '@/lib/resolveIdentifier'
+import { splitSqlStatements } from '@/lib/splitSql'
 import type * as monaco_t from 'monaco-editor'
 
 interface SqlCompletion {
@@ -85,8 +86,12 @@ async function fetchSchema(connectionId: string, database?: string): Promise<Sch
 }
 
 export interface SqlEditorRef {
-  /** Returns the text of the statement under the cursor, or selected text if any. */
-  getStatementAtCursor(): Promise<string | null>
+  /**
+   * Statements to run: a non-empty selection split on top-level `;` (so a
+   * multi-statement selection yields several), otherwise the single statement
+   * under the cursor. Empty when there's nothing to run.
+   */
+  getRunTargets(): Promise<string[]>
   /** Force a schema refetch (bypasses the cache TTL), keeping current schema usable. */
   refreshSchema(): void
 }
@@ -722,30 +727,28 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
 
   // ── Expose imperative API ─────────────────────────────────────────────────
   useImperativeHandle(ref, () => ({
-    async getStatementAtCursor() {
+    async getRunTargets() {
       const editor = editorRef.current
-      if (!editor) return null
+      const model  = editor?.getModel()
+      if (!editor || !model) return []
 
-      // Return selected text if any
+      // Non-empty selection → split it on top-level `;` so several statements run.
       const selection = editor.getSelection()
       if (selection && !selection.isEmpty()) {
-        return editor.getModel()?.getValueInRange(selection) ?? null
+        return splitSqlStatements(model.getValueInRange(selection))
       }
 
-      // Find the statement at the cursor position
+      // No selection → the single statement under the cursor.
       const worker = stmtWorkerRef.current
-      if (!worker) return editor.getValue() // fallback
-
-      const lines    = editor.getValue().split('\n')
-      const pos      = editor.getPosition()
-      const cursorLine = pos ? pos.lineNumber : 1 // 1-indexed
-
-      const stmts = await worker.splitStatements(lines)
-      // stmts use 0-indexed start; find the one that contains cursorLine (1-indexed)
-      const stmt = stmts.find(s =>
-        s.start + 1 <= cursorLine && cursorLine <= s.start + s.lineCount
-      )
-      return stmt?.text.trim() ?? null
+      const value  = editor.getValue()
+      if (!worker) { const v = value.trim(); return v ? [v] : [] }
+      const lines      = value.split('\n')
+      const pos        = editor.getPosition()
+      const cursorLine = pos ? pos.lineNumber : 1
+      const stmts      = await worker.splitStatements(lines)
+      const stmt = stmts.find(s => s.start + 1 <= cursorLine && cursorLine <= s.start + s.lineCount)
+      const text = stmt?.text.trim()
+      return text ? [text] : []
     },
     refreshSchema() { refreshSchemaRef.current?.() },
   }), [])

@@ -80,6 +80,9 @@ export default function EditorTabs() {
   // elapsed timer: Map<resultTabId, startMs>
   const [elapsed, setElapsed]          = useState<Map<string, number>>(new Map())
   const elapsedTimer                   = useRef<ReturnType<typeof setInterval> | null>(null)
+  // How many result tabs are currently running — drives a single shared ticker
+  // so multiple parallel queries all keep their elapsed readouts live.
+  const runningCount                   = useRef(0)
   const [resultsHeight, setResultsH]   = useState(DEFAULT_RESULTS_H)
   const editorAreaRef = useRef<HTMLDivElement>(null)
   const sqlEditorRef  = useRef<SqlEditorRef>(null)
@@ -185,36 +188,44 @@ export default function EditorTabs() {
     return id
   }, [resultMap, showResults])
 
-  // ── Run query ─────────────────────────────────────────────────────────────
-  const runQuery = useCallback(async (inNewResultTab = false) => {
-    const tab = tabs.find(t => t.id === activeId)
-    if (!tab || (!tab.type || tab.type === 'query') === false) return
-    if (!tab.connectionId) return
+  // ── Elapsed ticker (ref-counted) ──────────────────────────────────────────
+  // Each running result tab stores its own startMs; one shared interval re-emits
+  // the map so every live tab's elapsed readout updates. Stops when none run.
+  const beginElapsed = useCallback((resultTabId: string) => {
+    setElapsed(prev => new Map(prev).set(resultTabId, Date.now()))
+    runningCount.current += 1
+    if (!elapsedTimer.current) {
+      elapsedTimer.current = setInterval(() => setElapsed(prev => new Map(prev)), 50)
+    }
+  }, [])
+  const endElapsed = useCallback(() => {
+    runningCount.current = Math.max(0, runningCount.current - 1)
+    if (runningCount.current === 0 && elapsedTimer.current) {
+      clearInterval(elapsedTimer.current)
+      elapsedTimer.current = null
+    }
+  }, [])
 
-    const rawSql = (await sqlEditorRef.current?.getStatementAtCursor()) ?? tab.content.trim()
-    if (!rawSql.trim()) return
+  // ── Run one statement into an existing result tab ─────────────────────────
+  const executeInResultTab = useCallback(async (
+    editorTab: { id: number; connectionId?: string; queryLimit?: number; title: string },
+    resultTabId: string, rawSql: string,
+  ) => {
+    if (!editorTab.connectionId) return
+    const limit = editorTab.queryLimit ?? DEFAULT_LIMIT_VAL
+    const sql   = applyLimit(rawSql, limit)
+    const connectionId = editorTab.connectionId
 
-    const limit  = tab.queryLimit ?? DEFAULT_LIMIT_VAL
-    const sql    = applyLimit(rawSql, limit)
-    const resultTabId = ensureResultTab(tab.id, { forceNew: inNewResultTab })
+    beginElapsed(resultTabId)
 
-    // Start elapsed timer
-    const startMs = Date.now()
-    setElapsed(prev => new Map(prev).set(resultTabId, startMs))
-    if (elapsedTimer.current) clearInterval(elapsedTimer.current)
-    elapsedTimer.current = setInterval(() => setElapsed(prev => new Map(prev).set(resultTabId, startMs)), 50)
-
-    // Mark tab as running, store the SQL being executed
+    // Mark running. Keep prior `data` visible while the new query runs; a fresh
+    // run starts a new navigation root, so drop FK back/forward history.
     setResultMap(prev => {
-      const curr = prev.get(tab.id)
+      const curr = prev.get(editorTab.id)
       if (!curr) return prev
-      return new Map(prev).set(tab.id, {
+      return new Map(prev).set(editorTab.id, {
         ...curr,
-        activeId: resultTabId,
         tabs: curr.tabs.map(t => t.id === resultTabId
-          // Keep prior `data` visible while the new query runs — the footer shows
-          // the running indicator instead of a full-screen spinner takeover.
-          // A fresh run starts a new navigation root: drop FK back/forward history.
           ? { ...t, running: true, error: undefined, sql, baseSql: rawSql, colFilters: undefined, colFilterOps: undefined, history: undefined, future: undefined }
           : t),
       })
@@ -222,17 +233,16 @@ export default function EditorTabs() {
     startTask({
       id: `query:${resultTabId}`,
       kind: 'query',
-      label: tab.title,
+      label: editorTab.title,
       detail: rawSql.replace(/\s+/g, ' ').trim().slice(0, 120),
-      connectionId: tab.connectionId,
+      connectionId,
       cancellable: true,
     })
 
     try {
-      const data = await invoke<QueryResult>('execute_query', { connectionId: tab.connectionId, sql })
-      if (elapsedTimer.current) { clearInterval(elapsedTimer.current); elapsedTimer.current = null }
+      const data = await invoke<QueryResult>('execute_query', { connectionId, sql })
       setResultMap(prev => {
-        const curr = prev.get(tab.id)
+        const curr = prev.get(editorTab.id)
         if (!curr) return prev
         const hasMore = limit > 0 && data.rows.length >= limit
         const next: TabResults = {
@@ -242,14 +252,12 @@ export default function EditorTabs() {
                 ranAt: Date.now(), offset: data.rows.length, hasMore, colFilters: undefined, colFilterOps: undefined }
             : t),
         }
-        persistResults(tab.id, next)
-        return new Map(prev).set(tab.id, next)
+        persistResults(editorTab.id, next)
+        return new Map(prev).set(editorTab.id, next)
       })
-      endTask(`query:${resultTabId}`)
     } catch (e) {
-      if (elapsedTimer.current) { clearInterval(elapsedTimer.current); elapsedTimer.current = null }
       setResultMap(prev => {
-        const curr = prev.get(tab.id)
+        const curr = prev.get(editorTab.id)
         if (!curr) return prev
         const next: TabResults = {
           ...curr,
@@ -257,11 +265,60 @@ export default function EditorTabs() {
             ? { ...t, running: false, error: String(e), sql, baseSql: rawSql }
             : t),
         }
-        return new Map(prev).set(tab.id, next)
+        return new Map(prev).set(editorTab.id, next)
       })
+    } finally {
       endTask(`query:${resultTabId}`)
+      endElapsed()
     }
-  }, [activeId, tabs, resultMap, ensureResultTab, persistResults, startTask, endTask])
+  }, [beginElapsed, endElapsed, persistResults, startTask, endTask])
+
+  // Create `count` fresh result tabs in a single update; returns their ids and
+  // focuses the last. Used for multi-statement runs (one tab per statement).
+  const createResultTabs = useCallback((tabId: number, count: number): string[] => {
+    const ids = Array.from({ length: count }, () => newResultId())
+    setResultMap(prev => {
+      const existing = prev.get(tabId)
+      const usedNums = new Set((existing?.tabs ?? []).map(t => {
+        const m = t.title.match(/^Result (\d+)$/)
+        return m ? parseInt(m[1]) : 0
+      }))
+      let num = 1
+      const fresh: ResultTab[] = ids.map(id => {
+        while (usedNums.has(num)) num++
+        usedNums.add(num)
+        return { id, title: `Result ${num}` }
+      })
+      return new Map(prev).set(tabId, {
+        tabs: [...(existing?.tabs ?? []), ...fresh],
+        activeId: ids[ids.length - 1],
+      })
+    })
+    if (!showResults) setResultsH(DEFAULT_RESULTS_H)
+    return ids
+  }, [showResults])
+
+  // ── Run query ─────────────────────────────────────────────────────────────
+  const runQuery = useCallback(async (inNewResultTab = false) => {
+    const tab = tabs.find(t => t.id === activeId)
+    if (!tab || (!tab.type || tab.type === 'query') === false) return
+    if (!tab.connectionId) return
+
+    const targets = (await sqlEditorRef.current?.getRunTargets()) ?? [tab.content.trim()]
+    const stmts = targets.map(s => s.trim()).filter(Boolean)
+    if (stmts.length === 0) return
+
+    // Single statement → run in the current (or a new) result tab, as before.
+    if (stmts.length === 1) {
+      const resultTabId = ensureResultTab(tab.id, { forceNew: inNewResultTab })
+      void executeInResultTab(tab, resultTabId, stmts[0])
+      return
+    }
+
+    // Multi-statement selection → one result tab per statement, run in parallel.
+    const ids = createResultTabs(tab.id, stmts.length)
+    ids.forEach((rid, i) => { void executeInResultTab(tab, rid, stmts[i]) })
+  }, [activeId, tabs, ensureResultTab, createResultTabs, executeInResultTab])
 
   // ── Result tab management ─────────────────────────────────────────────────
   const setActiveResultTab = (tabId: number, resultId: string) =>
@@ -379,14 +436,10 @@ export default function EditorTabs() {
       })
     })
 
-    const startMs = Date.now()
-    setElapsed(prev => new Map(prev).set(resultTabId, startMs))
-    if (elapsedTimer.current) clearInterval(elapsedTimer.current)
-    elapsedTimer.current = setInterval(() => setElapsed(prev => new Map(prev).set(resultTabId, startMs)), 50)
+    beginElapsed(resultTabId)
 
     try {
       const data = await trackedQuery({ id: `query:${resultTabId}`, label: editorTab.title, connectionId: editorTab.connectionId, sql: newSql })
-      if (elapsedTimer.current) { clearInterval(elapsedTimer.current); elapsedTimer.current = null }
       setResultMap(prev => {
         const curr = prev.get(editorTabId)
         if (!curr) return prev
@@ -400,7 +453,6 @@ export default function EditorTabs() {
         return new Map(prev).set(editorTabId, next)
       })
     } catch (e) {
-      if (elapsedTimer.current) { clearInterval(elapsedTimer.current); elapsedTimer.current = null }
       setResultMap(prev => {
         const curr = prev.get(editorTabId)
         if (!curr) return prev
@@ -409,8 +461,10 @@ export default function EditorTabs() {
           tabs: curr.tabs.map(t => t.id === resultTabId ? { ...t, running: false, error: String(e) } : t),
         })
       })
+    } finally {
+      endElapsed()
     }
-  }, [tabs, resultMap, persistResults])
+  }, [tabs, resultMap, persistResults, trackedQuery, beginElapsed, endElapsed])
 
   // ── Column filter → re-run with WHERE ────────────────────────────────────
   const handleColumnFilter = useCallback(async (editorTabId: number, resultTabId: string, col: string, value: string, op = '~') => {
