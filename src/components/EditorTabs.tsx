@@ -4,6 +4,7 @@ import { timeAgo } from '@/lib/timeAgo'
 import { cacheGet, cacheSet } from '@/lib/cache'
 import { invoke } from '@tauri-apps/api/core'
 import { useTabs } from '@/context/TabsContext'
+import { useTasks } from '@/context/TasksContext'
 import SqlEditor, { type SqlEditorRef } from '@/components/SqlEditor'
 import SessionManagerTab from '@/components/SessionManagerTab'
 import LockManagerTab from '@/components/LockManagerTab'
@@ -59,6 +60,7 @@ function newResultId() { return `r${Date.now()}-${Math.random().toString(36).sli
 export default function EditorTabs() {
   const { tabs, activeId, setActiveId, openQueryTab, openSpecialTab, closeTab, updateContent, renameTab,
           setTabConnection, setTabDatabase, setTabQueryLimit } = useTabs()
+  const { startTask, endTask } = useTasks()
   const DEFAULT_LIMIT_VAL = DEFAULT_LIMIT
 
   const [editingId, setEditingId]      = useState<number | null>(null)
@@ -215,6 +217,14 @@ export default function EditorTabs() {
           : t),
       })
     })
+    startTask({
+      id: `query:${resultTabId}`,
+      kind: 'query',
+      label: tab.title,
+      detail: rawSql.replace(/\s+/g, ' ').trim().slice(0, 120),
+      connectionId: tab.connectionId,
+      cancellable: true,
+    })
 
     try {
       const data = await invoke<QueryResult>('execute_query', { connectionId: tab.connectionId, sql })
@@ -233,6 +243,7 @@ export default function EditorTabs() {
         persistResults(tab.id, next)
         return new Map(prev).set(tab.id, next)
       })
+      endTask(`query:${resultTabId}`)
     } catch (e) {
       if (elapsedTimer.current) { clearInterval(elapsedTimer.current); elapsedTimer.current = null }
       setResultMap(prev => {
@@ -246,8 +257,9 @@ export default function EditorTabs() {
         }
         return new Map(prev).set(tab.id, next)
       })
+      endTask(`query:${resultTabId}`)
     }
-  }, [activeId, tabs, resultMap, ensureResultTab, persistResults])
+  }, [activeId, tabs, resultMap, ensureResultTab, persistResults, startTask, endTask])
 
   // ── Result tab management ─────────────────────────────────────────────────
   const setActiveResultTab = (tabId: number, resultId: string) =>
@@ -299,6 +311,12 @@ export default function EditorTabs() {
         tabs: curr.tabs.map(t => t.id === resultTabId ? { ...t, loadingMore: true } : t),
       })
     })
+    startTask({
+      id: `load-more:${resultTabId}`,
+      kind: 'load-more',
+      label: `${editorTab.title} · more`,
+      connectionId: editorTab.connectionId,
+    })
 
     try {
       const data = await invoke<QueryResult>('execute_query', { connectionId: editorTab.connectionId, sql: newSql })
@@ -317,6 +335,7 @@ export default function EditorTabs() {
         persistResults(editorTabId, next)
         return new Map(prev).set(editorTabId, next)
       })
+      endTask(`load-more:${resultTabId}`)
     } catch {
       setResultMap(prev => {
         const curr = prev.get(editorTabId)
@@ -326,8 +345,9 @@ export default function EditorTabs() {
           tabs: curr.tabs.map(t => t.id === resultTabId ? { ...t, loadingMore: false } : t),
         })
       })
+      endTask(`load-more:${resultTabId}`)
     }
-  }, [tabs, resultMap, persistResults])
+  }, [tabs, resultMap, persistResults, startTask, endTask])
 
   // ── Sort → re-run with ORDER BY ───────────────────────────────────────────
   const handleSort = useCallback(async (editorTabId: number, resultTabId: string, col: string | null, dir: 'asc' | 'desc') => {
@@ -454,6 +474,30 @@ export default function EditorTabs() {
       })
     }
   }, [tabs, resultMap, persistResults])
+
+  // ── Download → re-run the current query with NO row limit ─────────────────
+  // Mirrors how handleColumnFilter/handleSort assemble the live query, minus the
+  // LIMIT clause, so a download contains every matching row.
+  const fetchAllResults = useCallback(async (editorTabId: number, resultTabId: string): Promise<QueryResult> => {
+    const editorTab = tabs.find(t => t.id === editorTabId)
+    if (!editorTab?.connectionId) throw new Error('No connection')
+    const tr = resultMap.get(editorTabId)
+    const rt = tr?.tabs.find(t => t.id === resultTabId)
+    const base = (rt?.baseSql ?? rt?.sql ?? '').trim().replace(/;\s*$/, '')
+    if (!base) throw new Error('Nothing to export')
+
+    const dialect = driverToDialect(connections.find(c => c.id === editorTab.connectionId)?.driver)
+    const conditions = Object.entries(rt?.colFilters ?? {})
+      .filter(([, v]) => v.trim())
+      .map(([c, v]) => buildFilterPredicate({ col: c, value: v, op: rt?.colFilterOps?.[c] ?? '~' }, dialect))
+
+    let sql = conditions.length > 0
+      ? `SELECT * FROM (\n${base}\n) _q\nWHERE ${conditions.join(' AND ')}`
+      : base
+    if (rt?.sortCol) sql += `\nORDER BY ${quoteIdent(rt.sortCol)} ${(rt.sortDir ?? 'asc').toUpperCase()}`
+    // No LIMIT — the whole result set.
+    return invoke<QueryResult>('execute_query', { connectionId: editorTab.connectionId, sql })
+  }, [tabs, resultMap, connections])
 
   // ── FK cell click → navigate to referenced row ───────────────────────────
   const handleFkClick = useCallback(async (
@@ -817,6 +861,7 @@ export default function EditorTabs() {
                     onColumnFilter={(resultTabId, col, val, op) => handleColumnFilter(active.id, resultTabId, col, val, op)}
                     onEditSql={(_resultTabId, sql) => handleEditSql(active.id, sql)}
                     onLoadMore={resultTabId => handleLoadMore(active.id, resultTabId)}
+                    onFetchAll={resultTabId => fetchAllResults(active.id, resultTabId)}
                     elapsed={elapsed}
                   />
                 </div>
