@@ -78,6 +78,22 @@ function SqlPreview({ sql, tabId, onEdit }: { sql: string; tabId: string; onEdit
   )
 }
 
+// ── Elapsed clock ───────────────────────────────────────────────────────────
+// Self-ticking leaf: owns its own interval so the running-time readout updates
+// without re-rendering ResultsPane / ResultTable. Only this tiny span repaints.
+function ElapsedClock({ startMs }: { startMs: number }) {
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setTick(n => n + 1), 100)
+    return () => clearInterval(id)
+  }, [])
+  return (
+    <span className="text-[10px] font-mono text-th-dim">
+      {((Date.now() - startMs) / 1000).toFixed(1)}s
+    </span>
+  )
+}
+
 // ── Main component ─────────────────────────────────────────────────────────
 
 export default function ResultsPane({
@@ -227,11 +243,7 @@ export default function ResultsPane({
           style={{ height: 22, borderTop: '1px solid var(--border)', background: 'var(--sidebar-bg)' }}>
           <Loader2 size={11} className="animate-spin" style={{ color: 'var(--tab-accent)' }} />
           <span className="text-[11px] text-th-dim">Running…</span>
-          {elapsed.has(activeTab.id) && (
-            <span className="text-[10px] font-mono text-th-dim">
-              {((Date.now() - elapsed.get(activeTab.id)!) / 1000).toFixed(1)}s
-            </span>
-          )}
+          {elapsed.has(activeTab.id) && <ElapsedClock startMs={elapsed.get(activeTab.id)!} />}
         </div>
       )}
     </div>

@@ -1,6 +1,6 @@
 import { useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { useTasks } from '@/context/TasksContext'
+import { useTaskActions } from '@/context/TasksContext'
 import type { QueryResult } from '@/lib/results'
 
 /** Single-line, whitespace-collapsed SQL preview for the activity monitor label. */
@@ -25,7 +25,7 @@ export interface TrackedQueryOpts {
  * task label is the SQL itself (truncated), not a generic "Result N" name.
  */
 export function useTrackedQuery() {
-  const { startTask, endTask } = useTasks()
+  const { startTask, endTask } = useTaskActions()
   return useCallback(async (opts: TrackedQueryOpts): Promise<QueryResult> => {
     startTask({
       id: opts.id,

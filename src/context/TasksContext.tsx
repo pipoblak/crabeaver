@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react'
+import { createContext, useContext, useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 
 const DOCK_SETTING = 'activity_docked'
@@ -16,11 +16,18 @@ export interface Task {
   startedAt: number      // Date.now() at registration, for the live elapsed timer
 }
 
-interface TasksContextValue {
-  tasks: Task[]
+// Actions are split into their own context so the many action-only consumers
+// (query runners, schema fetch, heartbeat) DON'T re-render every time the
+// `tasks` list churns on a query start/end — only the activity panel, which
+// reads `tasks`, re-renders.
+interface TaskActions {
   startTask: (task: Omit<Task, 'startedAt'>) => void
   endTask: (id: string) => void
   cancelTask: (id: string) => void
+}
+
+interface TasksState {
+  tasks: Task[]
   // Activity panel placement: floating popover (false) vs docked bottom tab (true).
   docked: boolean
   // Whether the panel is currently shown (popover open / dock visible).
@@ -29,13 +36,15 @@ interface TasksContextValue {
   setDockOpen: (v: boolean) => void
 }
 
-// No-op default (matches ConnectionContext): useTasks() outside a provider is a
-// harmless no-op, so consumers/tests that don't wrap with TasksProvider still work.
-const TasksContext = createContext<TasksContextValue>({
-  tasks: [],
+// No-op / empty defaults (match ConnectionContext): usable outside a provider.
+const TaskActionsContext = createContext<TaskActions>({
   startTask: () => {},
   endTask: () => {},
   cancelTask: () => {},
+})
+
+const TasksStateContext = createContext<TasksState>({
+  tasks: [],
   docked: false,
   dockOpen: false,
   setDocked: () => {},
@@ -79,11 +88,20 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
     invoke('set_setting', { key: DOCK_SETTING, value: v ? 'true' : 'false' }).catch(() => {})
   }, [])
 
+  // Stable across the provider's lifetime — action-only consumers never re-render.
+  const actions = useMemo<TaskActions>(() => ({ startTask, endTask, cancelTask }), [startTask, endTask, cancelTask])
+  const state   = useMemo<TasksState>(() => ({ tasks, docked, dockOpen, setDocked, setDockOpen }), [tasks, docked, dockOpen, setDocked])
+
   return (
-    <TasksContext.Provider value={{ tasks, startTask, endTask, cancelTask, docked, dockOpen, setDocked, setDockOpen }}>
-      {children}
-    </TasksContext.Provider>
+    <TaskActionsContext.Provider value={actions}>
+      <TasksStateContext.Provider value={state}>
+        {children}
+      </TasksStateContext.Provider>
+    </TaskActionsContext.Provider>
   )
 }
 
-export const useTasks = () => useContext(TasksContext)
+/** Stable task actions — subscribing does NOT re-render on task list changes. */
+export const useTaskActions = () => useContext(TaskActionsContext)
+/** Task list + activity-panel dock state — re-renders when tasks change. */
+export const useTasks = () => useContext(TasksStateContext)

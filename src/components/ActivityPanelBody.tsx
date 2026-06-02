@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Activity, X, Database, ChevronsDown, RefreshCw, PanelBottom, Minimize2 } from 'lucide-react'
-import { useTasks, type Task, type TaskKind } from '@/context/TasksContext'
+import { useTasks, useTaskActions, type Task, type TaskKind } from '@/context/TasksContext'
 
 const KIND_ICON: Record<TaskKind, typeof Database> = {
   'query':      Database,
@@ -13,7 +13,8 @@ const KIND_ICON: Record<TaskKind, typeof Database> = {
 // foreground and background task lists. Shared by the floating popover
 // (ActivityMonitor) and the docked bottom tab (ActivityDock).
 export default function ActivityPanelBody() {
-  const { tasks, cancelTask, docked, setDocked } = useTasks()
+  const { tasks, docked, setDocked } = useTasks()
+  const { cancelTask } = useTaskActions()
   const [, setTick] = useState(0)
 
   const foreground = tasks.filter(t => !t.background)

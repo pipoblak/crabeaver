@@ -4,7 +4,7 @@ import { timeAgo } from '@/lib/timeAgo'
 import { cacheGet, cacheSet } from '@/lib/cache'
 import { invoke } from '@tauri-apps/api/core'
 import { useTabs } from '@/context/TabsContext'
-import { useTasks } from '@/context/TasksContext'
+import { useTaskActions } from '@/context/TasksContext'
 import { useTrackedQuery, sqlPreview } from '@/hooks/useTrackedQuery'
 import SqlEditor, { type SqlEditorRef } from '@/components/SqlEditor'
 import SessionManagerTab from '@/components/SessionManagerTab'
@@ -61,7 +61,7 @@ function newResultId() { return `r${Date.now()}-${Math.random().toString(36).sli
 export default function EditorTabs() {
   const { tabs, activeId, setActiveId, openQueryTab, openSpecialTab, closeTab, updateContent, renameTab,
           setTabConnection, setTabDatabase, setTabQueryLimit } = useTabs()
-  const { startTask, endTask } = useTasks()
+  const { startTask, endTask } = useTaskActions()
   const trackedQuery = useTrackedQuery()
   const DEFAULT_LIMIT_VAL = DEFAULT_LIMIT
 
@@ -77,12 +77,9 @@ export default function EditorTabs() {
   const [resultMap, setResultMap]      = useState<Map<number, TabResults>>(new Map())
   const [cacheWarn, setCacheWarn]      = useState<string | null>(null)
   const [showHotkeys, setShowHotkeys]  = useState(false)
-  // elapsed timer: Map<resultTabId, startMs>
+  // elapsed: Map<resultTabId, startMs>. Just the start time — the live ticking
+  // lives in the <ElapsedClock> leaf so it never re-renders this whole tree.
   const [elapsed, setElapsed]          = useState<Map<string, number>>(new Map())
-  const elapsedTimer                   = useRef<ReturnType<typeof setInterval> | null>(null)
-  // How many result tabs are currently running — drives a single shared ticker
-  // so multiple parallel queries all keep their elapsed readouts live.
-  const runningCount                   = useRef(0)
   const [resultsHeight, setResultsH]   = useState(DEFAULT_RESULTS_H)
   const editorAreaRef = useRef<HTMLDivElement>(null)
   const sqlEditorRef  = useRef<SqlEditorRef>(null)
@@ -188,22 +185,15 @@ export default function EditorTabs() {
     return id
   }, [resultMap, showResults])
 
-  // ── Elapsed ticker (ref-counted) ──────────────────────────────────────────
-  // Each running result tab stores its own startMs; one shared interval re-emits
-  // the map so every live tab's elapsed readout updates. Stops when none run.
+  // ── Elapsed start markers ─────────────────────────────────────────────────
+  // Record only the start time per running result tab; the live readout ticks
+  // inside the isolated <ElapsedClock> leaf, so running a query no longer
+  // re-renders this component (and the whole result tree) 20×/second.
   const beginElapsed = useCallback((resultTabId: string) => {
     setElapsed(prev => new Map(prev).set(resultTabId, Date.now()))
-    runningCount.current += 1
-    if (!elapsedTimer.current) {
-      elapsedTimer.current = setInterval(() => setElapsed(prev => new Map(prev)), 50)
-    }
   }, [])
-  const endElapsed = useCallback(() => {
-    runningCount.current = Math.max(0, runningCount.current - 1)
-    if (runningCount.current === 0 && elapsedTimer.current) {
-      clearInterval(elapsedTimer.current)
-      elapsedTimer.current = null
-    }
+  const endElapsed = useCallback((resultTabId: string) => {
+    setElapsed(prev => { const m = new Map(prev); m.delete(resultTabId); return m })
   }, [])
 
   // ── Run one statement into an existing result tab ─────────────────────────
@@ -268,7 +258,7 @@ export default function EditorTabs() {
       })
     } finally {
       endTask(`query:${resultTabId}`)
-      endElapsed()
+      endElapsed(resultTabId)
     }
   }, [beginElapsed, endElapsed, persistResults, startTask, endTask])
 
@@ -461,7 +451,7 @@ export default function EditorTabs() {
         })
       })
     } finally {
-      endElapsed()
+      endElapsed(resultTabId)
     }
   }, [tabs, resultMap, persistResults, trackedQuery, beginElapsed, endElapsed])
 

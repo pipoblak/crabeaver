@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { useTasks } from '@/context/TasksContext'
+import { useTaskActions } from '@/context/TasksContext'
 
 interface Connection { id: string; name: string; driver: string; host: string; port: number; database: string }
 
@@ -30,7 +30,7 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
   // schema (and clears a stale connection error) after a reconnect.
   const [connectEpochs, setConnectEpochs] = useState<Record<string, number>>({})
 
-  const { startTask, endTask } = useTasks()
+  const { startTask, endTask } = useTaskActions()
 
   const reload = useCallback(async () => {
     startTask({ id: 'revalidate', kind: 'connection', label: 'Checking connections', background: true })

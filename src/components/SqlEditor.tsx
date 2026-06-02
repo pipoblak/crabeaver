@@ -3,7 +3,7 @@ import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from 're
 import { invoke } from '@tauri-apps/api/core'
 import { useTheme } from '@/context/ThemeContext'
 import { useConnections } from '@/context/ConnectionContext'
-import { useTasks } from '@/context/TasksContext'
+import { useTaskActions } from '@/context/TasksContext'
 import { useSqlValidation } from '@/hooks/useSqlValidation'
 import EditorGutter from '@/components/EditorGutter'
 import { loadScroll, saveScroll } from '@/lib/scroll'
@@ -140,7 +140,7 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
   const monaco = useMonaco()
   const { theme } = useTheme()
   const { markConnected, connectEpoch } = useConnections()
-  const { startTask, endTask } = useTasks()
+  const { startTask, endTask } = useTaskActions()
   const dark = isDark(theme.bg)
   const [editorReady, setEditorReady] = useState(false)
   const [editorInstance, setEditorInstance] = useState<monaco_t.editor.IStandaloneCodeEditor | null>(null)
