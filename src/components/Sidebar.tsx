@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useConnections } from '@/context/ConnectionContext'
 import { capabilitiesFor, descriptorFor } from '@/connectors/registry'
@@ -71,6 +71,48 @@ function StatusBar({ status }: { status: string }) {
     </div>
   )
 }
+
+// Hoisted to module scope (not redefined per Sidebar render) so React reconciles
+// rows instead of remounting the whole tree on every sidebar state change.
+// memo'd: a row skips re-render when its props are unchanged.
+const Row = memo(function Row({ depth, icon, label, expanded: exp, onClick, loading: spin, refreshing, onRefresh, fetchedAt, trailing }: {
+  depth: number; icon: React.ReactNode; label: string
+  expanded?: boolean; onClick?: () => void; loading?: boolean
+  refreshing?: boolean; onRefresh?: (e: React.MouseEvent) => void; fetchedAt?: number
+  /** Dim right-aligned text (e.g. a size badge). Hidden while the refresh button shows. */
+  trailing?: string
+}) {
+  const [hovered, setHovered] = useState(false)
+  return (
+    <div
+      className="flex items-center gap-1.5 cursor-pointer transition-colors"
+      style={{ paddingLeft: 8 + depth * 12, paddingTop: 3, paddingBottom: 3, paddingRight: 8, background: hovered ? 'var(--hover)' : 'transparent' }}
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <span className="shrink-0 text-th-dim w-3 flex justify-center">
+        {spin ? <Loader2 size={10} className="animate-spin" />
+          : exp !== undefined ? (exp ? <ChevronDown size={10} /> : <ChevronRight size={10} />) : null}
+      </span>
+      <span className="shrink-0 text-th-dim">{icon}</span>
+      <span className="text-[12px] text-th-text truncate flex-1">{label}</span>
+      {trailing && !(onRefresh && hovered) && (
+        <span className="shrink-0 text-[10px] text-th-dim tabular-nums">{trailing}</span>
+      )}
+      {onRefresh && hovered && (
+        <button
+          onClick={onRefresh}
+          title={refreshing ? 'Refreshing…' : fetchedAt ? `Updated ${timeAgo(fetchedAt)} · click to refresh` : 'Refresh'}
+          className="text-th-dim hover:text-th-accent transition-colors"
+          style={{ flexShrink: 0 }}
+        >
+          <RefreshCw size={10} className={refreshing ? 'animate-spin' : ''} />
+        </button>
+      )}
+    </div>
+  )
+})
 
 export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
   const { connections, connected, connect: ctxConnect, disconnect: ctxDisconnect } = useConnections()
@@ -272,45 +314,6 @@ export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
       }
     } catch (err) { setStatus(`Error: ${String(err)}`) }
     finally { setLoad(c.id, false) }
-  }
-
-  const Row = ({ depth, icon, label, expanded: exp, onClick, loading: spin, refreshing, onRefresh, fetchedAt, trailing }: {
-    depth: number; icon: React.ReactNode; label: string
-    expanded?: boolean; onClick?: () => void; loading?: boolean
-    refreshing?: boolean; onRefresh?: (e: React.MouseEvent) => void; fetchedAt?: number
-    /** Dim right-aligned text (e.g. a size badge). Hidden while the refresh button shows. */
-    trailing?: string
-  }) => {
-    const [hovered, setHovered] = useState(false)
-    return (
-      <div
-        className="flex items-center gap-1.5 cursor-pointer transition-colors"
-        style={{ paddingLeft: 8 + depth * 12, paddingTop: 3, paddingBottom: 3, paddingRight: 8, background: hovered ? 'var(--hover)' : 'transparent' }}
-        onClick={onClick}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-      >
-        <span className="shrink-0 text-th-dim w-3 flex justify-center">
-          {spin ? <Loader2 size={10} className="animate-spin" />
-            : exp !== undefined ? (exp ? <ChevronDown size={10} /> : <ChevronRight size={10} />) : null}
-        </span>
-        <span className="shrink-0 text-th-dim">{icon}</span>
-        <span className="text-[12px] text-th-text truncate flex-1">{label}</span>
-        {trailing && !(onRefresh && hovered) && (
-          <span className="shrink-0 text-[10px] text-th-dim tabular-nums">{trailing}</span>
-        )}
-        {onRefresh && hovered && (
-          <button
-            onClick={onRefresh}
-            title={refreshing ? 'Refreshing…' : fetchedAt ? `Updated ${timeAgo(fetchedAt)} · click to refresh` : 'Refresh'}
-            className="text-th-dim hover:text-th-accent transition-colors"
-            style={{ flexShrink: 0 }}
-          >
-            <RefreshCw size={10} className={refreshing ? 'animate-spin' : ''} />
-          </button>
-        )}
-      </div>
-    )
   }
 
   return (
