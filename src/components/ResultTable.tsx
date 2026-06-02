@@ -3,14 +3,14 @@ import {
   getFilteredRowModel,
   type ColumnDef,
 } from '@tanstack/react-table'
-import { useState, useMemo, useRef, useEffect } from 'react'
+import { useState, useMemo, useRef, useEffect, memo } from 'react'
 import { ChevronUp, ChevronDown, ChevronsUpDown, Loader2, Filter, Link, Copy, Check, Download, ExternalLink } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import type { QueryResult, ResultTab } from '@/lib/results'
 import { timeAgo } from '@/lib/timeAgo'
 import { formatResult, exportFilename, type ExportFormat } from '@/lib/clipboardExport'
 
-export default function ResultTable({ result, tab, fkColumns, fkRefs, onSort, onColumnFilter, onFkClick, onBack, onForward, onLoadMore, fetchAll }: {
+function ResultTable({ result, tab, fkColumns, fkRefs, onSort, onColumnFilter, onFkClick, onBack, onForward, onLoadMore, fetchAll }: {
   result:          QueryResult
   tab:             ResultTab
   fkColumns?:      Set<string>
@@ -523,3 +523,5 @@ const loadingRef     = useRef(false)
     </div>
   )
 }
+
+export default memo(ResultTable)

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { Loader2, XCircle, X, Edit2, Copy, Check } from 'lucide-react'
 import type { ResultTab, QueryResult } from '@/lib/results'
 export type { QueryResult, ResultTab } from '@/lib/results'
@@ -106,14 +106,37 @@ export default function ResultsPane({
   const [dropIdx,   setDropIdx]   = useState<number | null>(null)
   const dragSrc         = useRef<number | null>(null)
   const dropTarget      = useRef<number | null>(null)
-  const onFkClickPRef   = useRef(onFkClick)
-  const onBackPRef      = useRef(onBack)
-  const onForwardPRef   = useRef(onForward)
+  // Keep the latest handlers in refs so the callbacks handed to the (memoised)
+  // ResultTable stay referentially stable across editor keystrokes — otherwise
+  // every keystroke (which re-renders this pane via the tabs context) would
+  // re-render the whole result grid.
+  const onFkClickPRef     = useRef(onFkClick)
+  const onBackPRef        = useRef(onBack)
+  const onForwardPRef     = useRef(onForward)
+  const onSortPRef        = useRef(onSort)
+  const onColumnFilterPRef= useRef(onColumnFilter)
+  const onLoadMorePRef    = useRef(onLoadMore)
+  const onFetchAllPRef    = useRef(onFetchAll)
   useEffect(() => { onFkClickPRef.current = onFkClick }, [onFkClick])
   useEffect(() => { onBackPRef.current    = onBack    }, [onBack])
   useEffect(() => { onForwardPRef.current = onForward }, [onForward])
+  useEffect(() => { onSortPRef.current        = onSort },        [onSort])
+  useEffect(() => { onColumnFilterPRef.current= onColumnFilter },[onColumnFilter])
+  useEffect(() => { onLoadMorePRef.current    = onLoadMore },    [onLoadMore])
+  useEffect(() => { onFetchAllPRef.current    = onFetchAll },    [onFetchAll])
 
   const activeTab = tabs.find(t => t.id === activeId)
+  const activeTabId = activeTab?.id
+
+  // Stable per-result-tab callbacks (identity changes only when the active
+  // result tab changes, not on every parent re-render).
+  const cbSort         = useCallback((col: string | null, dir: 'asc' | 'desc') => { if (activeTabId) onSortPRef.current(activeTabId, col, dir) }, [activeTabId])
+  const cbColumnFilter = useCallback((col: string, val: string, op: string) => { if (activeTabId) onColumnFilterPRef.current(activeTabId, col, val, op) }, [activeTabId])
+  const cbFkClick      = useCallback((table: string, col: string, val: string, newTab: boolean) => { if (activeTabId) onFkClickPRef.current?.(activeTabId, table, col, val, newTab) }, [activeTabId])
+  const cbBack         = useCallback(() => { if (activeTabId) onBackPRef.current?.(activeTabId) }, [activeTabId])
+  const cbForward      = useCallback(() => { if (activeTabId) onForwardPRef.current?.(activeTabId) }, [activeTabId])
+  const cbLoadMore     = useCallback(() => { if (activeTabId) onLoadMorePRef.current(activeTabId) }, [activeTabId])
+  const cbFetchAll     = useCallback(() => onFetchAllPRef.current!(activeTabId!), [activeTabId])
 
   const startRename = (t: ResultTab) => { setEditingId(t.id); setEditTitle(t.title) }
   const commitRename = (id: string) => {
@@ -219,13 +242,13 @@ export default function ResultsPane({
         ) : activeTab?.data ? (
           <ResultTable key={activeTab.id} result={activeTab.data} tab={activeTab}
             fkColumns={fkColumns} fkRefs={fkRefs}
-            onSort={(col, dir) => onSort(activeTab.id, col, dir)}
-            onColumnFilter={(col, val, op) => onColumnFilter(activeTab.id, col, val, op)}
-            onFkClick={(table, col, val, newTab) => onFkClickPRef.current?.(activeTab.id, table, col, val, newTab)}
-            onBack={() => onBackPRef.current?.(activeTab.id)}
-            onForward={() => onForwardPRef.current?.(activeTab.id)}
-            fetchAll={onFetchAll ? () => onFetchAll(activeTab.id) : undefined}
-            onLoadMore={activeTab.hasMore !== false ? () => onLoadMore(activeTab.id) : undefined} />
+            onSort={cbSort}
+            onColumnFilter={cbColumnFilter}
+            onFkClick={cbFkClick}
+            onBack={cbBack}
+            onForward={cbForward}
+            fetchAll={onFetchAll ? cbFetchAll : undefined}
+            onLoadMore={activeTab.hasMore !== false ? cbLoadMore : undefined} />
         ) : activeTab?.running ? (
           // First run on this tab — no prior results to keep; footer shows progress.
           <div className="h-full" />
