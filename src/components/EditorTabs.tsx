@@ -56,6 +56,14 @@ function saveCachedResults(filePath: string, tr: TabResults): 'ok' | 'too_large'
   return 'ok'
 }
 
+// Run heavy, non-urgent work (large JSON.stringify + localStorage write) off the
+// critical path so finishing a query doesn't stall the frame. Idle if supported.
+function scheduleIdle(fn: () => void) {
+  const ric = (globalThis as unknown as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => void }).requestIdleCallback
+  if (typeof ric === 'function') ric(fn, { timeout: 1000 })
+  else setTimeout(fn, 0)
+}
+
 function newResultId() { return `r${Date.now()}-${Math.random().toString(36).slice(2, 7)}` }
 
 export default function EditorTabs() {
@@ -63,6 +71,9 @@ export default function EditorTabs() {
           setTabConnection, setTabDatabase, setTabQueryLimit } = useTabs()
   const { startTask, endTask } = useTaskActions()
   const trackedQuery = useTrackedQuery()
+  // Latest tabs for stable callbacks that only need to read (not subscribe).
+  const tabsRef = useRef(tabs)
+  tabsRef.current = tabs
   const DEFAULT_LIMIT_VAL = DEFAULT_LIMIT
 
   const [editingId, setEditingId]      = useState<number | null>(null)
@@ -107,15 +118,21 @@ export default function EditorTabs() {
   }, [activeId])
 
   // ── Save results to cache when they change ─────────────────────────────────
+  // Deferred to idle: serializing/writing a multi-MB result must not block the
+  // frame that just rendered the query result. Reads tabs via ref so the
+  // callback stays referentially stable.
   const persistResults = useCallback((tabId: number, tr: TabResults) => {
-    const tab = tabs.find(t => t.id === tabId)
+    const tab = tabsRef.current.find(t => t.id === tabId)
     if (!tab?.filePath) return
-    const status = saveCachedResults(tab.filePath, tr)
-    if (status === 'too_large') {
-      setCacheWarn(`Results too large to cache (>${(CACHE_MAX_BYTES / 1024 / 1024).toFixed(0)}MB). Not saved.`)
-      setTimeout(() => setCacheWarn(null), 4000)
-    }
-  }, [tabs])
+    const filePath = tab.filePath
+    scheduleIdle(() => {
+      const status = saveCachedResults(filePath, tr)
+      if (status === 'too_large') {
+        setCacheWarn(`Results too large to cache (>${(CACHE_MAX_BYTES / 1024 / 1024).toFixed(0)}MB). Not saved.`)
+        setTimeout(() => setCacheWarn(null), 4000)
+      }
+    })
+  }, [])
 
   // ── Keyboard shortcuts ────────────────────────────────────────────────────
   useEffect(() => {
