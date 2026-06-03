@@ -394,7 +394,7 @@ const loadingRef     = useRef(false)
                 {/* Row-number gutter header — shrinks to content */}
                 <th style={{ width: 1, padding: '4px 6px', borderBottom: '1px solid var(--border)',
                              borderRight: '1px solid var(--border)', textAlign: 'right',
-                             userSelect: 'none', color: 'var(--text-dim)', fontWeight: 600,
+                             userSelect: 'none', WebkitUserSelect: 'none', color: 'var(--text-dim)', fontWeight: 600,
                              fontSize: 10, whiteSpace: 'nowrap', background: 'var(--sidebar-bg)' }}>#</th>
                 {hg.headers.map(h => {
                   const isSort = sortCol === h.column.id
@@ -484,7 +484,7 @@ const loadingRef     = useRef(false)
                     title="Select row"
                     style={{ width: 1, padding: '3px 6px', borderBottom: '1px solid var(--border)',
                              borderRight: '1px solid var(--border)', textAlign: 'right', cursor: 'pointer',
-                             color: 'var(--text-dim)', userSelect: 'none', whiteSpace: 'nowrap', fontSize: 10 }}>
+                             color: 'var(--text-dim)', userSelect: 'none', WebkitUserSelect: 'none', whiteSpace: 'nowrap', fontSize: 10 }}>
                   {ri + 1}
                 </td>
                 {row.getVisibleCells().map(cell => {
