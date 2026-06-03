@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
-import { X, Database, Play, PlayCircle, Square, RefreshCw, Keyboard } from 'lucide-react'
+import { useEffect, useRef, useState, useCallback, lazy, Suspense } from 'react'
+import { X, Database, Play, PlayCircle, Square, RefreshCw, Keyboard, Loader2 } from 'lucide-react'
 import { timeAgo } from '@/lib/timeAgo'
 import { cacheGet, cacheSet } from '@/lib/cache'
 import { invoke } from '@tauri-apps/api/core'
@@ -7,10 +7,12 @@ import { useTabs } from '@/context/TabsContext'
 import { useTaskActions } from '@/context/TasksContext'
 import { useTrackedQuery, sqlPreview } from '@/hooks/useTrackedQuery'
 import SqlEditor, { type SqlEditorRef } from '@/components/SqlEditor'
-import SessionManagerTab from '@/components/SessionManagerTab'
-import LockManagerTab from '@/components/LockManagerTab'
-import TableDetailsTab from '@/components/TableDetailsTab'
-import SchemaDetailsTab from '@/components/SchemaDetailsTab'
+// Lazy-loaded: these tabs aren't part of the default query view, so their code
+// (and deps) stays out of the initial bundle until first opened.
+const SessionManagerTab = lazy(() => import('@/components/SessionManagerTab'))
+const LockManagerTab    = lazy(() => import('@/components/LockManagerTab'))
+const TableDetailsTab   = lazy(() => import('@/components/TableDetailsTab'))
+const SchemaDetailsTab  = lazy(() => import('@/components/SchemaDetailsTab'))
 import ResultsPane, { type QueryResult, type ResultTab } from '@/components/ResultsPane'
 import ResizeHandle from '@/components/ResizeHandle'
 import HotkeysHelp from '@/components/HotkeysHelp'
@@ -847,29 +849,33 @@ export default function EditorTabs() {
 
       {/* Editor + results area */}
       <div ref={editorAreaRef} className="relative flex-1 min-h-0 bg-th-bg flex flex-col">
-        {active?.type === 'session-manager' && active.connectionId && (
-          <SessionManagerTab key={active.id} connectionId={active.connectionId} connectionName={active.connectionName ?? active.title} />
-        )}
-        {active?.type === 'lock-manager' && active.connectionId && (
-          <LockManagerTab key={active.id} connectionId={active.connectionId} connectionName={active.connectionName ?? active.title} />
-        )}
-        {active?.type === 'table-details' && active.connectionId && (
-          <TableDetailsTab key={active.id} connectionId={active.connectionId}
-            schema={(active as any).schema ?? 'public'} table={(active as any).table ?? ''}
-            driver={connections.find(c => c.id === active.connectionId)?.driver} />
-        )}
-        {active?.type === 'schema-details' && active.connectionId && (
-          <SchemaDetailsTab
-            key={active.id}
-            connectionId={active.connectionId}
-            schema={(active as any).schema ?? 'public'}
-            driver={connections.find(c => c.id === active.connectionId)?.driver}
-            onOpenTable={(schema, table) => openSpecialTab('table-details', table, {
-              connectionId: active.connectionId,
-              connectionName: active.connectionName,
-              ...({ schema, table } as any),
-            })}
-          />
+        {active && active.type && active.type !== 'query' && active.connectionId && (
+          <Suspense fallback={<div className="flex items-center justify-center flex-1 gap-2 text-th-dim"><Loader2 size={16} className="animate-spin" />Loading…</div>}>
+            {active.type === 'session-manager' && (
+              <SessionManagerTab key={active.id} connectionId={active.connectionId} connectionName={active.connectionName ?? active.title} />
+            )}
+            {active.type === 'lock-manager' && (
+              <LockManagerTab key={active.id} connectionId={active.connectionId} connectionName={active.connectionName ?? active.title} />
+            )}
+            {active.type === 'table-details' && (
+              <TableDetailsTab key={active.id} connectionId={active.connectionId}
+                schema={(active as any).schema ?? 'public'} table={(active as any).table ?? ''}
+                driver={connections.find(c => c.id === active.connectionId)?.driver} />
+            )}
+            {active.type === 'schema-details' && (
+              <SchemaDetailsTab
+                key={active.id}
+                connectionId={active.connectionId}
+                schema={(active as any).schema ?? 'public'}
+                driver={connections.find(c => c.id === active.connectionId)?.driver}
+                onOpenTable={(schema, table) => openSpecialTab('table-details', table, {
+                  connectionId: active.connectionId,
+                  connectionName: active.connectionName,
+                  ...({ schema, table } as any),
+                })}
+              />
+            )}
+          </Suspense>
         )}
         {isQueryTab && active && (
           <>
