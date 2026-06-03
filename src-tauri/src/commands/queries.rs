@@ -11,12 +11,199 @@ pub struct QueryFileMeta {
     pub path: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Workspace {
+    pub name: String,
+    pub queries: Vec<QueryFileMeta>,
+}
+
 fn queries_dir_path(app: &AppHandle, configured: Option<String>) -> Result<PathBuf, String> {
     if let Some(p) = configured {
         return Ok(PathBuf::from(p));
     }
     let docs = app.path().document_dir().map_err(|e| e.to_string())?;
     Ok(docs.join("Crabeaver").join("queries"))
+}
+
+/// Reject names that are empty or could escape the queries dir via path
+/// separators or `..` traversal.
+fn valid_name(name: &str) -> Result<(), String> {
+    let n = name.trim();
+    if n.is_empty() || n.contains('/') || n.contains('\\') || n.contains("..") {
+        return Err("Invalid name".into());
+    }
+    Ok(())
+}
+
+/// Resolve the queries dir: read the `queries_dir` setting, fall back to the
+/// default path, and ensure it exists. Used by every workspace command.
+async fn resolve_queries_dir(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+) -> Result<PathBuf, String> {
+    let row = sqlx::query_scalar::<_, String>(
+        "SELECT value FROM settings WHERE key = 'queries_dir'",
+    )
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let dir = queries_dir_path(app, row)?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+/// Idempotent migration: ensure `<dir>/Default/` exists and move every `*.sql`
+/// file sitting directly in the root into it, carrying along any sibling
+/// `<dir>/.history/<stem>/` history folder. Per-file failures are logged and
+/// skipped so one bad file can't abort the whole migration.
+fn migrate_root_to_default(dir: &Path) -> Result<(), String> {
+    let default = dir.join("Default");
+    std::fs::create_dir_all(&default).map_err(|e| e.to_string())?;
+
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) => return Err(e.to_string()),
+    };
+
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        let is_sql_file = path.extension().map(|ext| ext == "sql").unwrap_or(false)
+            && entry.file_type().map(|t| t.is_file()).unwrap_or(false);
+        if !is_sql_file {
+            continue;
+        }
+
+        let file_name = match path.file_name() {
+            Some(n) => n.to_os_string(),
+            None => continue,
+        };
+
+        let target = default.join(&file_name);
+        if let Err(e) = std::fs::rename(&path, &target) {
+            tracing::warn!("migration: failed to move {:?} into Default/: {}", path, e);
+            continue;
+        }
+
+        // Move the per-query history folder, if present.
+        if let Some(stem) = path.file_stem() {
+            let old_history = dir.join(".history").join(stem);
+            if old_history.exists() {
+                let new_history_parent = default.join(".history");
+                if let Err(e) = std::fs::create_dir_all(&new_history_parent) {
+                    tracing::warn!(
+                        "migration: failed to create {:?}: {}",
+                        new_history_parent,
+                        e
+                    );
+                    continue;
+                }
+                let new_history = new_history_parent.join(stem);
+                if let Err(e) = std::fs::rename(&old_history, &new_history) {
+                    tracing::warn!(
+                        "migration: failed to move history {:?} -> {:?}: {}",
+                        old_history,
+                        new_history,
+                        e
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// List immediate subdirectories of `dir` as workspaces, excluding hidden dirs
+/// (name starts with `.`) and `.history`. Each workspace's direct `*.sql` files
+/// become its queries, sorted by name; workspaces are sorted by name too.
+fn list_workspaces_in(dir: &Path) -> Result<Vec<Workspace>, String> {
+    let mut workspaces: Vec<Workspace> = std::fs::read_dir(dir)
+        .map_err(|e| e.to_string())?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .filter_map(|e| {
+            let path = e.path();
+            let name = path.file_name()?.to_str()?.to_string();
+            if name.starts_with('.') || name == ".history" {
+                return None;
+            }
+
+            let mut queries: Vec<QueryFileMeta> = std::fs::read_dir(&path)
+                .ok()?
+                .filter_map(|e| e.ok())
+                .filter(|e| {
+                    let p = e.path();
+                    p.extension().map(|ext| ext == "sql").unwrap_or(false)
+                        && e.file_type().map(|t| t.is_file()).unwrap_or(false)
+                })
+                .filter_map(|e| {
+                    let p = e.path();
+                    let qname = p.file_stem()?.to_str()?.to_string();
+                    Some(QueryFileMeta {
+                        name: qname,
+                        path: p.to_string_lossy().to_string(),
+                    })
+                })
+                .collect();
+            queries.sort_by(|a, b| a.name.cmp(&b.name));
+
+            Some(Workspace { name, queries })
+        })
+        .collect();
+
+    workspaces.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(workspaces)
+}
+
+/// Create a new workspace dir under `dir`. Errors if a sibling with that name
+/// already exists.
+fn create_workspace_in(dir: &Path, name: &str) -> Result<(), String> {
+    valid_name(name)?;
+    let p = dir.join(name.trim());
+    if p.exists() {
+        return Err("Workspace already exists".into());
+    }
+    std::fs::create_dir(p).map_err(|e| e.to_string())
+}
+
+/// Rename a workspace dir. Errors if the target already exists.
+fn rename_workspace_in(dir: &Path, old_name: &str, new_name: &str) -> Result<(), String> {
+    valid_name(new_name)?;
+    let target = dir.join(new_name.trim());
+    if target.exists() {
+        return Err("Workspace already exists".into());
+    }
+    std::fs::rename(dir.join(old_name.trim()), target).map_err(|e| e.to_string())
+}
+
+/// Delete a workspace dir and everything inside it.
+fn delete_workspace_in(dir: &Path, name: &str) -> Result<(), String> {
+    valid_name(name)?;
+    std::fs::remove_dir_all(dir.join(name.trim())).map_err(|e| e.to_string())
+}
+
+/// Create an empty `*.sql` query inside a workspace, choosing a unique filename:
+/// `<name>.sql`, then `<name> (2).sql`, `<name> (3).sql`, … Returns the full path.
+fn create_query_in(dir: &Path, workspace: &str, name: &str) -> Result<String, String> {
+    valid_name(workspace)?;
+    valid_name(name)?;
+
+    let ws_dir = dir.join(workspace.trim());
+    if !ws_dir.exists() {
+        return Err("Workspace does not exist".into());
+    }
+
+    let base = name.trim();
+    let mut candidate = ws_dir.join(format!("{}.sql", base));
+    let mut n = 2;
+    while candidate.exists() {
+        candidate = ws_dir.join(format!("{} ({}).sql", base, n));
+        n += 1;
+    }
+
+    std::fs::write(&candidate, "").map_err(|e| e.to_string())?;
+    Ok(candidate.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -184,6 +371,58 @@ pub async fn rename_query_file(old_path: String, new_path: String) -> Result<(),
     Ok(())
 }
 
+#[tauri::command]
+pub async fn list_workspaces(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<Workspace>, String> {
+    let dir = resolve_queries_dir(&app, &state).await?;
+    migrate_root_to_default(&dir)?;
+    list_workspaces_in(&dir)
+}
+
+#[tauri::command]
+pub async fn create_workspace(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<(), String> {
+    let dir = resolve_queries_dir(&app, &state).await?;
+    create_workspace_in(&dir, &name)
+}
+
+#[tauri::command]
+pub async fn rename_workspace(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    old_name: String,
+    new_name: String,
+) -> Result<(), String> {
+    let dir = resolve_queries_dir(&app, &state).await?;
+    rename_workspace_in(&dir, &old_name, &new_name)
+}
+
+#[tauri::command]
+pub async fn delete_workspace(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<(), String> {
+    let dir = resolve_queries_dir(&app, &state).await?;
+    delete_workspace_in(&dir, &name)
+}
+
+#[tauri::command]
+pub async fn create_query(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    workspace: String,
+    name: String,
+) -> Result<String, String> {
+    let dir = resolve_queries_dir(&app, &state).await?;
+    create_query_in(&dir, &workspace, &name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,5 +512,99 @@ mod tests {
         assert!(new_history.exists());
         assert!(!old_history.exists());
         assert_eq!(fs::read_dir(&new_history).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn valid_name_rejects_unsafe_and_accepts_plain() {
+        assert!(valid_name("a/b").is_err());
+        assert!(valid_name("..").is_err());
+        assert!(valid_name("").is_err());
+        assert!(valid_name("   ").is_err());
+        assert!(valid_name("a\\b").is_err());
+        assert!(valid_name("Analytics").is_ok());
+    }
+
+    #[test]
+    fn migration_moves_root_sql_and_history_into_default() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+
+        // Root-level query plus its history folder.
+        fs::write(root.join("foo.sql"), "SELECT 1").unwrap();
+        let history = root.join(".history").join("foo");
+        fs::create_dir_all(&history).unwrap();
+        fs::write(history.join("snap.sql"), "SELECT 1").unwrap();
+
+        migrate_root_to_default(root).unwrap();
+
+        // foo.sql moved into Default/.
+        assert!(!root.join("foo.sql").exists(), "root foo.sql should be moved");
+        assert!(root.join("Default").join("foo.sql").exists());
+
+        // History folder moved into Default/.history/foo/.
+        let moved_history = root.join("Default").join(".history").join("foo");
+        assert!(moved_history.exists(), "history should move into Default/.history/");
+        assert_eq!(fs::read_dir(&moved_history).unwrap().count(), 1);
+        assert!(!root.join(".history").join("foo").exists());
+
+        // Second run is a no-op (no root .sql left, no error).
+        migrate_root_to_default(root).unwrap();
+        assert!(root.join("Default").join("foo.sql").exists());
+        assert!(!root.join("foo.sql").exists());
+    }
+
+    #[test]
+    fn create_query_picks_unique_name_on_collision() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("Default")).unwrap();
+
+        let p1 = create_query_in(root, "Default", "report").unwrap();
+        assert!(p1.ends_with("report.sql"));
+        assert!(Path::new(&p1).exists());
+
+        // Collision -> "report (2).sql".
+        let p2 = create_query_in(root, "Default", "report").unwrap();
+        assert!(p2.ends_with("report (2).sql"), "got {p2}");
+        assert!(Path::new(&p2).exists());
+
+        // Another collision -> "report (3).sql".
+        let p3 = create_query_in(root, "Default", "report").unwrap();
+        assert!(p3.ends_with("report (3).sql"), "got {p3}");
+    }
+
+    #[test]
+    fn create_query_rejects_missing_workspace() {
+        let dir = TempDir::new().unwrap();
+        assert!(create_query_in(dir.path(), "Nope", "q").is_err());
+    }
+
+    #[test]
+    fn delete_workspace_removes_dir() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        let ws = root.join("Analytics");
+        fs::create_dir_all(&ws).unwrap();
+        fs::write(ws.join("q.sql"), "SELECT 1").unwrap();
+        assert!(ws.exists());
+
+        delete_workspace_in(root, "Analytics").unwrap();
+        assert!(!ws.exists(), "workspace dir should be removed");
+    }
+
+    #[test]
+    fn list_workspaces_excludes_hidden_and_history() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("Default")).unwrap();
+        fs::write(root.join("Default").join("a.sql"), "").unwrap();
+        fs::create_dir_all(root.join(".history").join("foo")).unwrap();
+        fs::create_dir_all(root.join(".hidden")).unwrap();
+
+        let ws = list_workspaces_in(root).unwrap();
+        assert_eq!(ws.len(), 1);
+        assert_eq!(ws[0].name, "Default");
+        assert_eq!(ws[0].queries.len(), 1);
+        assert_eq!(ws[0].queries[0].name, "a");
     }
 }
