@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { ChevronRight, ChevronDown, Folder, FolderOpen, FileText, Plus, Trash2 } from 'lucide-react'
 import { useWorkspaces, type Workspace } from '@/hooks/useWorkspaces'
 import { useTabs } from '@/context/TabsContext'
+import ResizeHandle from '@/components/ResizeHandle'
+import { beginResizeDrag } from '@/lib/resizeDrag'
 
 // Inline text input for create / rename, committed on Enter, cancelled on Escape/blur.
 function InlineInput({ initial, placeholder, onCommit, onCancel }: {
@@ -29,6 +31,7 @@ export default function WorkspacesSection() {
   const { workspaces, createWorkspace, renameWorkspace, deleteWorkspace, createQuery, deleteQuery, renameQuery } = useWorkspaces()
   const { openQueryByPath, closeQueryByPath, closeWorkspaceTabs, tabs, activeId } = useTabs()
 
+  const [height, setHeight] = useState(260)   // resizable panel height (px)
   const [expanded, setExpanded] = useState<Set<string>>(new Set(['Default']))
   const [creatingWs, setCreatingWs] = useState(false)
   const [creatingIn, setCreatingIn] = useState<string | null>(null)      // workspace name
@@ -60,7 +63,11 @@ export default function WorkspacesSection() {
   }
 
   return (
-    <div className="shrink-0 flex flex-col" style={{ borderTop: '1px solid var(--border)', maxHeight: '42%' }}>
+    <div className="shrink-0 flex flex-col" style={{ height, borderTop: '1px solid var(--border)' }}>
+      {/* Drag handle — resize the panel by dragging the top edge */}
+      <ResizeHandle direction="vertical"
+        onMouseDown={e => { const sh = height; beginResizeDrag(e, 'y', d => setHeight(Math.max(80, Math.min(window.innerHeight * 0.75, sh - d)))) }} />
+
       {/* Header */}
       <div className="flex items-center justify-between pl-4 pr-2 shrink-0" style={{ height: 30, borderBottom: '1px solid var(--border)' }}>
         <span className="text-[11px] font-semibold tracking-[0.1em] uppercase text-th-dim">Workspaces</span>
@@ -72,7 +79,7 @@ export default function WorkspacesSection() {
 
       {error && <div className="px-4 py-1 text-[10px]" style={{ color: 'var(--error-text, #f87171)' }}>{error}</div>}
 
-      <div className="flex flex-col overflow-y-auto">
+      <div className="flex flex-col flex-1 min-h-0 overflow-y-auto">
         {creatingWs && (
           <div className="flex items-center gap-1.5" style={{ padding: '3px 8px 3px 20px' }}>
             <Folder size={11} className="shrink-0 text-th-dim" />
