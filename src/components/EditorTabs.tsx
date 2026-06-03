@@ -160,6 +160,21 @@ export default function EditorTabs() {
     })
   }, [])
 
+  // Tracks whether focus last landed inside the result pane. A ref (not live
+  // activeElement) because switching a result tab remounts the grid — focus drops
+  // to <body>, so a live check would wrongly route the next ⌘1..9 to editor tabs.
+  // Ignoring <body> focusin keeps the intent sticky across that remount.
+  const resultsFocusedRef = useRef(false)
+  useEffect(() => {
+    const onFocusIn = (e: FocusEvent) => {
+      const el = e.target as HTMLElement | null
+      if (!el || el === document.body) return
+      resultsFocusedRef.current = !!el.closest?.('[data-results-pane]')
+    }
+    document.addEventListener('focusin', onFocusIn)
+    return () => document.removeEventListener('focusin', onFocusIn)
+  }, [])
+
   // ── Keyboard shortcuts ────────────────────────────────────────────────────
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -171,8 +186,7 @@ export default function EditorTabs() {
         // focused, otherwise the editor tabs.
         if (!e.altKey && !e.shiftKey && e.key >= '1' && e.key <= '9') {
           const idx = Number(e.key) - 1
-          const inResults = !!(document.activeElement as HTMLElement | null)?.closest?.('[data-results-pane]')
-          if (inResults) {
+          if (resultsFocusedRef.current) {
             const rt = resultMap.get(activeId)
             if (rt?.tabs[idx]) { e.preventDefault(); setActiveResultTab(activeId, rt.tabs[idx].id) }
           } else if (tabs[idx]) {

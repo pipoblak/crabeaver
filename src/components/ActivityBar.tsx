@@ -1,12 +1,13 @@
-import { Database, Search, GitBranch, Settings } from 'lucide-react'
-import { useState } from 'react'
+import { Database, Search, Settings } from 'lucide-react'
+import { useState, useEffect } from 'react'
 import type { AppView } from '@/App'
 
 const navItems = [
   { icon: Database,   label: 'Connections' },
   { icon: Search,     label: 'Search' },
-  { icon: GitBranch,  label: 'History' },
 ]
+
+const SEARCH_NAV = navItems.findIndex(n => n.label === 'Search')
 
 interface Props {
   view: AppView
@@ -20,6 +21,19 @@ export default function ActivityBar({ view, setView }: Props) {
     setActiveNav(i)
     setView('editor')
   }
+
+  // ⌘/Ctrl + Shift + F → jump to the Search nav.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
+        e.preventDefault()
+        setActiveNav(SEARCH_NAV)
+        setView('editor')
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [setView])
 
   return (
     <div className="flex flex-col items-center w-12 shrink-0 bg-th-activity border-r border-r-th-border">
