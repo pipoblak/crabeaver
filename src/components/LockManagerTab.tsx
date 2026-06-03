@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { RefreshCw, XCircle, Loader2, X } from 'lucide-react'
 import ResizeHandle from '@/components/ResizeHandle'
+import { beginResizeDrag } from '@/lib/resizeDrag'
 import { useCachedResource } from '@/hooks/useCachedResource'
 import { timeAgo } from '@/lib/timeAgo'
 
@@ -190,7 +191,7 @@ export default function LockManagerTab({ connectionId, connectionName }: Props) 
         {selected && (
           <>
             <ResizeHandle direction="horizontal"
-              onMouseDown={e => { e.preventDefault(); const s=e.clientX, sw=detailW; const m=(ev:MouseEvent)=>setDetailW(Math.max(160,Math.min(500,sw-(ev.clientX-s)))); const u=()=>{window.removeEventListener('mousemove',m);window.removeEventListener('mouseup',u);document.body.style.cursor='';document.body.style.userSelect=''}; document.body.style.cursor='col-resize';document.body.style.userSelect='none';window.addEventListener('mousemove',m);window.addEventListener('mouseup',u) }}
+              onMouseDown={e => { const sw=detailW; beginResizeDrag(e, 'x', d => setDetailW(Math.max(160, Math.min(500, sw - d)))) }}
             />
             <div className="shrink-0 overflow-y-auto flex flex-col"
               style={{ width: detailW, borderLeft: '1px solid var(--border)', background: 'var(--sidebar-bg)' }}>
@@ -225,7 +226,7 @@ export default function LockManagerTab({ connectionId, connectionName }: Props) 
       {selected?.query && selected.query !== PRIV_ERR && (
         <>
           <ResizeHandle direction="vertical"
-            onMouseDown={e => { e.preventDefault(); const s=e.clientY,sh=sqlH; const m=(ev:MouseEvent)=>setSqlH(Math.max(60,Math.min(300,sh-(ev.clientY-s)))); const u=()=>{window.removeEventListener('mousemove',m);window.removeEventListener('mouseup',u);document.body.style.cursor='';document.body.style.userSelect=''}; document.body.style.cursor='row-resize';document.body.style.userSelect='none';window.addEventListener('mousemove',m);window.addEventListener('mouseup',u) }}
+            onMouseDown={e => { const sh=sqlH; beginResizeDrag(e, 'y', d => setSqlH(Math.max(60, Math.min(300, sh - d)))) }}
           />
           <div style={{ height: sqlH, flexShrink: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', borderTop: '1px solid var(--border)' }}>
             <div className="px-3 py-1 text-[10px] font-semibold tracking-widest uppercase text-th-dim"

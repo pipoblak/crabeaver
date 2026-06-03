@@ -707,13 +707,18 @@ export default function EditorTabs() {
     draggingRef.current = true
     dragStartY.current  = e.clientY
     dragStartH.current  = resultsHeight
+    let raf = 0
     const onMove = (ev: MouseEvent) => {
-      if (!draggingRef.current) return
-      const delta = dragStartY.current - ev.clientY
-      const total = editorAreaRef.current?.getBoundingClientRect().height ?? 600
-      setResultsH(Math.min(total - MIN_EDITOR_H, Math.max(MIN_RESULTS_H, dragStartH.current + delta)))
+      if (!draggingRef.current || raf) return
+      const y = ev.clientY
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        const delta = dragStartY.current - y
+        const total = editorAreaRef.current?.getBoundingClientRect().height ?? 600
+        setResultsH(Math.min(total - MIN_EDITOR_H, Math.max(MIN_RESULTS_H, dragStartH.current + delta)))
+      })
     }
-    const onUp = () => { draggingRef.current = false; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+    const onUp = () => { draggingRef.current = false; if (raf) cancelAnimationFrame(raf); window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
   }

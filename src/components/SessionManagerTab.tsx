@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { RefreshCw, XCircle, Loader2, X } from 'lucide-react'
 import ResizeHandle from '@/components/ResizeHandle'
+import { beginResizeDrag } from '@/lib/resizeDrag'
 import { useResize } from '@/hooks/useResize'
 import { useCachedResource } from '@/hooks/useCachedResource'
 import { timeAgo } from '@/lib/timeAgo'
@@ -194,7 +195,7 @@ export default function SessionManagerTab({ connectionId, connectionName }: Prop
         {/* Session Details panel */}
         {selected && (
           <>
-          <ResizeHandle direction="horizontal" onMouseDown={e => { e.preventDefault(); const start = e.clientX; const startW = detailW; const move = (ev: MouseEvent) => { setDetailW(Math.max(160, Math.min(500, startW - (ev.clientX - start)))) }; const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); document.body.style.cursor=''; document.body.style.userSelect='' }; document.body.style.cursor='col-resize'; document.body.style.userSelect='none'; window.addEventListener('mousemove', move); window.addEventListener('mouseup', up) }} />
+          <ResizeHandle direction="horizontal" onMouseDown={e => { const startW = detailW; beginResizeDrag(e, 'x', d => setDetailW(Math.max(160, Math.min(500, startW - d)))) }} />
           <div className="shrink-0 overflow-y-auto flex flex-col"
             style={{ width: detailW, borderLeft: '1px solid var(--border)', background: 'var(--sidebar-bg)' }}>
             <div className="flex items-center justify-between px-3 py-2" style={{ borderBottom: '1px solid var(--border)' }}>
@@ -229,7 +230,7 @@ export default function SessionManagerTab({ connectionId, connectionName }: Prop
       {/* Query preview at bottom — resizable */}
       {selected && cleanQuery(selected.query) && (
         <>
-          <ResizeHandle direction="vertical" onMouseDown={e => { e.preventDefault(); const start = e.clientY; const startH = sqlH; const move = (ev: MouseEvent) => { setSqlH(Math.max(60, Math.min(300, startH - (ev.clientY - start)))) }; const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); document.body.style.cursor=''; document.body.style.userSelect='' }; document.body.style.cursor='row-resize'; document.body.style.userSelect='none'; window.addEventListener('mousemove', move); window.addEventListener('mouseup', up) }} />
+          <ResizeHandle direction="vertical" onMouseDown={e => { const startH = sqlH; beginResizeDrag(e, 'y', d => setSqlH(Math.max(60, Math.min(300, startH - d)))) }} />
         <div style={{ borderTop: '1px solid var(--border)', height: sqlH, flexShrink: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <div className="px-3 py-1 text-[10px] font-semibold tracking-widest uppercase text-th-dim"
             style={{ borderBottom: '1px solid var(--border)', flexShrink: 0 }}>SQL</div>

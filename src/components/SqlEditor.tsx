@@ -635,6 +635,9 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
       provideDocumentHighlights: (model, position) => {
         const word = model.getWordAtPosition(position)
         if (!word || SQL_KW.has(word.word.toUpperCase())) return []
+        // Skip the full-file scan on very large documents — it runs on every
+        // cursor move and would jank the editor.
+        if (model.getValueLength() > 100_000) return []
         const text    = model.getValue()
         const escaped = word.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
         const regex   = new RegExp(`\\b${escaped}\\b`, 'gi')

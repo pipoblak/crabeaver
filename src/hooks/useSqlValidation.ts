@@ -1,6 +1,6 @@
 import { useRef, useCallback, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { wrap, type Remote } from 'comlink'
+import type { Remote } from 'comlink'
 import { useValidation } from '@/context/ValidationContext'
 import type { SqlWorkerApi, Statement } from '@/workers/sqlWorker'
 import type * as monaco_t from 'monaco-editor'
@@ -52,11 +52,13 @@ export function useSqlValidation(
   const scanAbort    = useRef(false)
   const viewportDebounce = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Boot worker once
+  // Boot worker once. comlink is dynamically imported so it lands in its own
+  // chunk (shared with SqlEditor's statement worker) instead of the main bundle.
   useEffect(() => {
     const w = new Worker(new URL('../workers/sqlWorker.ts', import.meta.url), { type: 'module' })
-    workerRef.current = wrap<SqlWorkerApi>(w)
-    return () => { w.terminate(); workerRef.current = null }
+    let alive = true
+    import('comlink').then(({ wrap }) => { if (alive) workerRef.current = wrap<SqlWorkerApi>(w) })
+    return () => { alive = false; w.terminate(); workerRef.current = null }
   }, [])
 
   const worker = () => workerRef.current

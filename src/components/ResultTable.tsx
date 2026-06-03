@@ -140,9 +140,16 @@ const loadingRef     = useRef(false)
       }
     }
 
-    el.addEventListener('scroll', check, { passive: true })
+    // Coalesce scroll events to one check per frame (rAF) instead of running on
+    // every scroll tick.
+    let raf = 0
+    const onScroll = () => {
+      if (raf) return
+      raf = requestAnimationFrame(() => { raf = 0; check() })
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
     check()
-    return () => el.removeEventListener('scroll', check)
+    return () => { el.removeEventListener('scroll', onScroll); if (raf) cancelAnimationFrame(raf) }
   }, [tab.hasMore])
 
   // Sorting is query-side — track locally for icon display only

@@ -152,19 +152,26 @@ export default function ResultsPane({
     dropTarget.current = idx
     setDragIdx(idx)
 
+    let raf = 0
     const onMove = (ev: MouseEvent) => {
-      // Find which tab we're hovering by querying tab elements
-      const els = document.querySelectorAll('[data-result-tab-idx]')
-      for (const el of els) {
-        const r = el.getBoundingClientRect()
-        const i = Number((el as HTMLElement).dataset.resultTabIdx)
-        if (ev.clientX >= r.left && ev.clientX <= r.right) {
-          if (dropTarget.current !== i) { dropTarget.current = i; setDropIdx(i) }
-          break
+      if (raf) return
+      const x = ev.clientX
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        // Find which tab we're hovering by querying tab elements
+        const els = document.querySelectorAll('[data-result-tab-idx]')
+        for (const el of els) {
+          const r = el.getBoundingClientRect()
+          const i = Number((el as HTMLElement).dataset.resultTabIdx)
+          if (x >= r.left && x <= r.right) {
+            if (dropTarget.current !== i) { dropTarget.current = i; setDropIdx(i) }
+            break
+          }
         }
-      }
+      })
     }
     const onUp = () => {
+      if (raf) cancelAnimationFrame(raf)
       const from = dragSrc.current
       const to   = dropTarget.current
       if (from !== null && to !== null && from !== to) onReorderTab(from, to)
