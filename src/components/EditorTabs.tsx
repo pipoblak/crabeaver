@@ -27,6 +27,13 @@ interface TabResults {
 
 const DEFAULT_LIMIT      = 200
 const CACHE_MAX_BYTES    = 10 * 1024 * 1024   // 10 MB per result tab set — warn above this
+// Cap on FK back/forward depth. Each snapshot holds a full result's rows, so an
+// unbounded stack is a real memory leak across deep FK navigation.
+const MAX_HISTORY        = 25
+// Keep in-memory result data for at most this many recently-active editor tabs.
+// Older tabs' rows are dropped from memory (restored from the localStorage cache
+// on return) so open-tab count doesn't grow RAM without bound.
+const RESULT_LRU         = 3
 const DEFAULT_RESULTS_H  = 240
 const MIN_EDITOR_H       = 80
 const MIN_RESULTS_H      = 60
@@ -96,6 +103,8 @@ export default function EditorTabs() {
   const [resultsHeight, setResultsH]   = useState(DEFAULT_RESULTS_H)
   const editorAreaRef = useRef<HTMLDivElement>(null)
   const sqlEditorRef  = useRef<SqlEditorRef>(null)
+  // Most-recently-active editor tab ids (front = current) for LRU result eviction.
+  const recentRef     = useRef<number[]>([])
   const draggingRef   = useRef(false)
   const dragStartY    = useRef(0)
   const dragStartH    = useRef(0)
@@ -104,19 +113,34 @@ export default function EditorTabs() {
     invoke<Connection[]>('list_connections').then(setConnections).catch(() => {})
   }, [])
 
-  // ── Restore cached results when a tab becomes active ──────────────────────
+  // ── On tab switch: restore the active tab's results, evict stale ones ──────
+  // Keeps only the RESULT_LRU most-recently-active tabs' rows in memory. Older
+  // tabs are dropped (and reloaded from the localStorage cache on return), so a
+  // session with many heavy result sets doesn't grow RAM without bound.
   useEffect(() => {
-    const tab = tabs.find(t => t.id === activeId)
-    if (!tab?.filePath || resultMap.has(activeId)) return
-    const cached = loadCachedResults(tab.filePath)
-    if (cached) {
-      // Strip running state from cached tabs
-      const restored: TabResults = {
-        ...cached,
-        tabs: cached.tabs.map(t => ({ ...t, running: false })),
+    recentRef.current = [activeId, ...recentRef.current.filter(id => id !== activeId)]
+    const keep = new Set(recentRef.current.slice(0, RESULT_LRU))
+
+    setResultMap(prev => {
+      let next = prev
+      const mutable = () => { if (next === prev) next = new Map(prev); return next }
+
+      // Restore the active tab's results from cache if they're not in memory.
+      const activeTab = tabsRef.current.find(t => t.id === activeId)
+      if (activeTab?.filePath && !prev.has(activeId)) {
+        const cached = loadCachedResults(activeTab.filePath)
+        if (cached) mutable().set(activeId, { ...cached, tabs: cached.tabs.map(t => ({ ...t, running: false })) })
       }
-      setResultMap(prev => new Map(prev).set(activeId, restored))
-    }
+
+      // Evict inactive tabs beyond the LRU window — only those safely restorable
+      // (have a cache entry) and not currently running a query.
+      for (const [id, entry] of prev) {
+        if (keep.has(id) || entry.tabs.some(rt => rt.running)) continue
+        const t = tabsRef.current.find(x => x.id === id)
+        if (t?.filePath && localStorage.getItem(cacheKey(t.filePath))) mutable().delete(id)
+      }
+      return next
+    })
   }, [activeId])
 
   // ── Save results to cache when they change ─────────────────────────────────
@@ -143,6 +167,18 @@ export default function EditorTabs() {
         if (e.key === 't') { e.preventDefault(); openQueryTab() }
         if (e.key === 'w') { e.preventDefault(); closeTab(activeId) }
         if (e.key === 'Enter') { e.preventDefault(); runQuery() }
+        // ⌘/Ctrl + 1..9 → switch tabs. Switches result tabs when the result pane is
+        // focused, otherwise the editor tabs.
+        if (!e.altKey && !e.shiftKey && e.key >= '1' && e.key <= '9') {
+          const idx = Number(e.key) - 1
+          const inResults = !!(document.activeElement as HTMLElement | null)?.closest?.('[data-results-pane]')
+          if (inResults) {
+            const rt = resultMap.get(activeId)
+            if (rt?.tabs[idx]) { e.preventDefault(); setActiveResultTab(activeId, rt.tabs[idx].id) }
+          } else if (tabs[idx]) {
+            e.preventDefault(); setActiveId(tabs[idx].id)
+          }
+        }
       }
     }
     window.addEventListener('keydown', handler)
@@ -606,7 +642,7 @@ export default function EditorTabs() {
             offset: t.offset, hasMore: t.hasMore,
           }
           return { ...t, running: true, sql,
-            history: snapshot ? [...(t.history ?? []), snapshot] : (t.history ?? []),
+            history: snapshot ? [...(t.history ?? []), snapshot].slice(-MAX_HISTORY) : (t.history ?? []),
             // A new FK branch invalidates any forward history.
             future: snapshot ? [] : t.future }
         }),
@@ -661,7 +697,7 @@ export default function EditorTabs() {
       const next: TabResults = {
         ...curr,
         tabs: curr.tabs.map(t => t.id === resultTabId
-          ? { ...t, ...prevState, running: false, history, future: [...(t.future ?? []), snapshotOf(t)] }
+          ? { ...t, ...prevState, running: false, history, future: [...(t.future ?? []), snapshotOf(t)].slice(-MAX_HISTORY) }
           : t),
       }
       return new Map(prev).set(editorTabId, next)
@@ -680,7 +716,7 @@ export default function EditorTabs() {
       const next: TabResults = {
         ...curr,
         tabs: curr.tabs.map(t => t.id === resultTabId
-          ? { ...t, ...nextState, running: false, history: [...(t.history ?? []), snapshotOf(t)], future }
+          ? { ...t, ...nextState, running: false, history: [...(t.history ?? []), snapshotOf(t)].slice(-MAX_HISTORY), future }
           : t),
       }
       return new Map(prev).set(editorTabId, next)
@@ -917,7 +953,7 @@ export default function EditorTabs() {
             {showResults && tr && tr.tabs.length > 0 && (
               <>
                 <ResizeHandle direction="vertical" onMouseDown={onDragStart} />
-                <div style={{ height: resultsHeight, flexShrink: 0, overflow: 'hidden', borderTop: '1px solid var(--border)' }}>
+                <div data-results-pane style={{ height: resultsHeight, flexShrink: 0, overflow: 'hidden', borderTop: '1px solid var(--border)' }}>
                   <ResultsPane
                     tabs={tr.tabs}
                     activeId={tr.activeId}

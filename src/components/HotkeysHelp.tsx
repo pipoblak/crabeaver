@@ -20,6 +20,7 @@ const GROUPS: Group[] = [
     shortcuts: [
       { keys: [mod, 'T'], label: 'New query tab' },
       { keys: [mod, 'W'], label: 'Close tab' },
+      { keys: [mod, '1–9'], label: 'Go to tab (result tab when results focused)' },
     ],
   },
   {

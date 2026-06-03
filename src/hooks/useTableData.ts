@@ -32,6 +32,9 @@ export interface UseTableData {
   forward: () => void
 }
 
+// Cap on back/forward depth — each snapshot holds a full page of rows.
+const MAX_HISTORY = 25
+
 const initial = (schema: string, table: string): TableDataState => ({
   schema, table, running: false, loadingMore: false, filters: [], offset: 0, hasMore: false, history: [], future: [],
 })
@@ -101,7 +104,7 @@ export function useTableData(
       sort: undefined, filters: [{ col: refCol, value, op: '=' }],
       running: false, loadingMore: false, offset: 0, hasMore: false,
       // A new branch invalidates any forward history.
-      history: [...s.history, snapshot], future: [],
+      history: [...s.history, snapshot].slice(-MAX_HISTORY), future: [],
     })
   }, [run])
 
@@ -111,7 +114,7 @@ export function useTableData(
       const history = [...s.history]
       const prev = history.pop()!
       const { history: _h, future: _f, running: _r, loadingMore: _l, ...cur } = s
-      return { ...prev, running: false, loadingMore: false, history, future: [...s.future, cur] }
+      return { ...prev, running: false, loadingMore: false, history, future: [...s.future, cur].slice(-MAX_HISTORY) }
     })
   }, [])
 
@@ -121,7 +124,7 @@ export function useTableData(
       const future = [...s.future]
       const next = future.pop()!
       const { history: _h, future: _f, running: _r, loadingMore: _l, ...cur } = s
-      return { ...next, running: false, loadingMore: false, history: [...s.history, cur], future }
+      return { ...next, running: false, loadingMore: false, history: [...s.history, cur].slice(-MAX_HISTORY), future }
     })
   }, [])
 

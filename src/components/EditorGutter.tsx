@@ -29,6 +29,10 @@ export default function EditorGutter({ editor, monaco, workerApi, value }: Props
   const [collapsedLines, setCollapsed] = useState(new Set<number>())
   const [hoveredLine, setHoveredLine]  = useState<number | null>(null)
   const [cursorLine, setCursorLine]    = useState(1)
+  // Selection span (1-based line range) — drives which statements show as active,
+  // so a selection covering several statements highlights all of them, not just one.
+  const [selStart, setSelStart]        = useState(1)
+  const [selEnd, setSelEnd]            = useState(1)
   const [height, setHeight]            = useState(600)
 
   const [layoutVersion, setLayoutVersion] = useState(0)
@@ -68,7 +72,12 @@ export default function EditorGutter({ editor, monaco, workerApi, value }: Props
   }, [editor, stmts])
 
   useEffect(() => {
-    const d = editor.onDidChangeCursorPosition(e => setCursorLine(e.position.lineNumber))
+    const d = editor.onDidChangeCursorSelection(e => {
+      const s = e.selection
+      setCursorLine(s.positionLineNumber)
+      setSelStart(Math.min(s.startLineNumber, s.endLineNumber))
+      setSelEnd(Math.max(s.startLineNumber, s.endLineNumber))
+    })
     return () => d.dispose()
   }, [editor])
 
@@ -124,7 +133,11 @@ export default function EditorGutter({ editor, monaco, workerApi, value }: Props
 
     // Only show scope for actual SQL statements (starts with keyword)
     const isSqlStmt = inStmt ? STMT_KEYWORDS.test(inStmt.text.trimStart()) : false
-    const isActiveStmt = isSqlStmt && lineToStmt.get(cursorLine) === inStmt
+    // Active when the statement's line range overlaps the current selection span —
+    // so selecting across multiple statements highlights every one it touches.
+    const sStart = inStmt ? inStmt.start + 1 : 0
+    const sEnd   = inStmt ? sStart + inStmt.lineCount - 1 : 0
+    const isActiveStmt = isSqlStmt && !!inStmt && sStart <= selEnd && sEnd >= selStart
     const barColor   = isActiveStmt ? 'var(--tab-accent)' : SCOPE_COLOR
     const barOpacity = isActiveStmt ? 0.55 : SCOPE_OPACITY
     let scopeStyle: React.CSSProperties = {}
