@@ -51,7 +51,11 @@ export default function WorkspacesSection() {
     setCreatingIn(null)
     try { const path = await createQuery(ws, name); await openQueryByPath(path) } catch (e) { flash(e) }
   }
-  const removeQuery = (path: string) => { closeQueryByPath(path); run(deleteQuery(path)) }
+  const removeQuery = (path: string) => {
+    const name = (path.split('/').pop() ?? path).replace(/\.sql$/i, '')
+    if (!window.confirm(`Delete query "${name}"?`)) return
+    closeQueryByPath(path); run(deleteQuery(path))
+  }
   const removeWorkspace = (name: string) => {
     if (!window.confirm(`Delete workspace "${name}" and all its queries?`)) return
     closeWorkspaceTabs(name); run(deleteWorkspace(name))

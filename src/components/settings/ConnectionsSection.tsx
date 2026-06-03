@@ -126,6 +126,8 @@ export default function ConnectionsSection({ initialConnectionId }: { initialCon
   }
 
   const remove = async (id: string) => {
+    const name = connections.find(c => c.id === id)?.name ?? 'this connection'
+    if (!window.confirm(`Delete connection "${name}"? This also removes its saved password.`)) return
     await invoke('delete_connection', { id }).catch(() => {})
     cacheDelete('has-password', id)
     setConnections(prev => prev.filter(c => c.id !== id))
