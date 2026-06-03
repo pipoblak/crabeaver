@@ -4,6 +4,7 @@ import {
   type ColumnDef,
 } from '@tanstack/react-table'
 import { useState, useMemo, useRef, useEffect, memo } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { ChevronUp, ChevronDown, ChevronsUpDown, Loader2, Filter, Link, Copy, Check, Download, ExternalLink } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import type { QueryResult, ResultTab } from '@/lib/results'
@@ -194,6 +195,20 @@ const loadingRef     = useRef(false)
 
   const rows  = table.getRowModel().rows
   const total = result.rows.length
+
+  // ── Row virtualization ────────────────────────────────────────────────────
+  // Only the visible rows (+ overscan) hit the DOM, so a 100k-row result scrolls
+  // as smoothly as a 50-row one. Spacer rows preserve the real scroll height.
+  const colCount = result.columns.length + 1 // + row-number gutter
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 23, // ~3px padding × 2 + 12px line
+    overscan: 16,
+  })
+  const virtualRows = rowVirtualizer.getVirtualItems()
+  const padTop    = virtualRows.length ? virtualRows[0].start : 0
+  const padBottom = virtualRows.length ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end : 0
 
   // ── Selection ─────────────────────────────────────────────────────────────
   // Two modes, mutually exclusive: click the row NUMBER to select whole rows
@@ -448,7 +463,11 @@ const loadingRef     = useRef(false)
             ))}
           </thead>
           <tbody>
-            {rows.map((row, ri) => (
+            {padTop > 0 && <tr style={{ height: padTop }}><td colSpan={colCount} style={{ padding: 0, border: 0 }} /></tr>}
+            {virtualRows.map(vr => {
+              const row = rows[vr.index]
+              const ri  = vr.index
+              return (
               <tr key={row.id}
                 style={{ background: selected.has(row.id)
                            ? 'color-mix(in srgb, var(--tab-accent) 22%, transparent)'
@@ -496,7 +515,9 @@ const loadingRef     = useRef(false)
                   )
                 })}
               </tr>
-            ))}
+              )
+            })}
+            {padBottom > 0 && <tr style={{ height: padBottom }}><td colSpan={colCount} style={{ padding: 0, border: 0 }} /></tr>}
           </tbody>
         </table>
         {tab.loadingMore && (
