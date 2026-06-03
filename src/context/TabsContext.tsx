@@ -2,9 +2,15 @@ import { createContext, useContext, useState, useCallback, useEffect, useRef } f
 import { invoke } from '@tauri-apps/api/core'
 import type { Tab } from '@/lib/tabs'
 
-interface QueryFileMeta {
-  name: string
-  path: string
+interface QueryFileMeta { name: string; path: string }
+interface WorkspaceMeta { name: string; queries: QueryFileMeta[] }
+type ConnMap = Record<string, { id: string; name: string; database?: string }>
+
+// Derive the query title (file stem) and owning workspace (parent dir name).
+const stemOf = (path: string) => (path.split('/').pop() ?? path).replace(/\.sql$/i, '')
+const workspaceOf = (path: string) => {
+  const parts = path.split('/')
+  return parts.length >= 2 ? parts[parts.length - 2] : undefined
 }
 
 interface TabsContextValue {
@@ -12,7 +18,16 @@ interface TabsContextValue {
   activeId: number
   restored: boolean
   setActiveId: (id: number) => void
+  /** Create a new query in the active tab's workspace (falls back to Default). */
   openQueryTab: () => Promise<void>
+  /** Create a query in a specific workspace and open it. */
+  createQuery: (workspace: string, title?: string) => Promise<void>
+  /** Open an existing query by path — focuses it if already open. */
+  openQueryByPath: (path: string) => Promise<void>
+  /** Close the tab backing a query path, if open (does NOT delete the file). */
+  closeQueryByPath: (path: string) => void
+  /** Close all open tabs belonging to a workspace (used when it's deleted). */
+  closeWorkspaceTabs: (workspace: string) => void
   openSpecialTab: (type: Tab['type'], title: string, extra?: Partial<Tab>) => void
   closeTab: (id: number) => void
   updateContent: (id: number, content: string) => void
@@ -34,80 +49,88 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
   const nextIdRef = useRef(1)
   const activeIdRef = useRef(0)
 
-  // Keep tabsRef in sync so callbacks can read current tabs without stale closures
   useEffect(() => { tabsRef.current = tabs }, [tabs])
-
-  // Keep activeIdRef in sync so closeTab never captures a stale activeId
   useEffect(() => { activeIdRef.current = activeId }, [activeId])
-
-  // Clear all pending save timers on unmount
-  useEffect(() => {
-    return () => {
-      saveTimers.current.forEach(t => clearTimeout(t))
-      saveTimers.current.clear()
-    }
+  useEffect(() => () => {
+    saveTimers.current.forEach(t => clearTimeout(t))
+    saveTimers.current.clear()
   }, [])
 
+  // ── Persist the set of open query tabs (by path) for next-session restore ──
+  const persistOpenTabs = (list: Tab[]) => {
+    const paths = list.filter(t => (!t.type || t.type === 'query') && t.filePath).map(t => t.filePath)
+    invoke('set_setting', { key: 'open_query_tabs', value: JSON.stringify(paths) }).catch(() => {})
+  }
+  const persistActivePath = (path: string) => {
+    invoke('set_setting', { key: 'active_query_path', value: path }).catch(() => {})
+  }
+  // Per-tab connection map, keyed by file path (titles collide across workspaces).
+  const persistConnMap = (list: Tab[]) => {
+    const map: ConnMap = {}
+    list.forEach(t => {
+      if (t.filePath && t.connectionId && t.connectionName)
+        map[t.filePath] = { id: t.connectionId, name: t.connectionName, database: t.database }
+    })
+    invoke('set_setting', { key: 'tab_query_connections', value: JSON.stringify(map) }).catch(() => {})
+  }
+  const persistSpecialTabs = (list: Tab[]) => {
+    const specials = list.filter(t => t.type && t.type !== 'query').map(t => ({ ...t }))
+    invoke('set_setting', { key: 'open_special_tabs', value: JSON.stringify(specials) }).catch(() => {})
+  }
+
+  // ── Session restore: reopen only last session's tabs (not every file) ──────
   const loadTabs = useCallback(async () => {
     saveTimers.current.forEach(t => clearTimeout(t))
     saveTimers.current.clear()
     setRestored(false)
 
     try {
-      const files = await invoke<QueryFileMeta[]>('list_query_files')
+      const [openRaw, activePath, connRaw, specialRaw] = await Promise.all([
+        invoke<string | null>('get_setting', { key: 'open_query_tabs' }).catch(() => null),
+        invoke<string | null>('get_setting', { key: 'active_query_path' }).catch(() => null),
+        invoke<string | null>('get_setting', { key: 'tab_query_connections' }).catch(() => null),
+        invoke<string | null>('get_setting', { key: 'open_special_tabs' }).catch(() => null),
+      ])
+      const connMap: ConnMap = connRaw ? JSON.parse(connRaw) : {}
+      let openPaths: string[] = openRaw ? JSON.parse(openRaw) : []
 
-      if (files.length === 0) {
-        const dir = await invoke<string>('get_queries_dir')
-        const filePath = `${dir}/Query 1.sql`
-        await invoke('write_query_file', { path: filePath, content: '' })
-        nextIdRef.current = 2
-        setTabs([{ id: 1, title: 'Query 1', filePath, content: '', isDirty: false }])
-        setActiveIdState(1)
-      } else {
-        // Load tab connections map alongside file contents
-        const [loadedTabs, connMapRaw] = await Promise.all([
-          Promise.all(files.map(async (f, i) => {
-            const id = i + 1
-            const content = await invoke<string>('read_query_file', { path: f.path })
-            return { id, title: f.name, filePath: f.path, content, isDirty: false } as Tab
-          })),
-          invoke<string | null>('get_setting', { key: 'tab_query_connections' }).catch(() => null),
-        ])
-
-        const connMap: Record<string, { id: string; name: string; database?: string }> = connMapRaw
-          ? JSON.parse(connMapRaw)
-          : {}
-        const tabsWithConns = loadedTabs.map(t => ({
-          ...t,
-          connectionId:   connMap[t.title]?.id,
-          connectionName: connMap[t.title]?.name,
-          database:       connMap[t.title]?.database,
-        }))
-
-        // Also restore special tabs (session-manager, lock-manager, table-details)
-        const specialRaw = await invoke<string | null>('get_setting', { key: 'open_special_tabs' }).catch(() => null)
-        const specialMeta: Array<Partial<Tab> & { type: string }> = specialRaw ? JSON.parse(specialRaw) : []
-        let nextId = tabsWithConns.length + 1
-        const specialTabs: Tab[] = specialMeta.map(m => ({
-          id:          nextId++,
-          title:       m.title ?? '',
-          filePath:    '',
-          content:     '',
-          isDirty:     false,
-          type:        m.type as Tab['type'],
-          connectionId:   (m as any).connectionId,
-          connectionName: (m as any).connectionName,
-          ...(m as any),
-        }))
-
-        nextIdRef.current = nextId
-        const allTabs = [...tabsWithConns, ...specialTabs]
-        setTabs(allTabs)
-
-        const activeFile = await invoke<string | null>('get_setting', { key: 'active_query_file' })
-        const activeTab = allTabs.find(t => t.title === activeFile) ?? allTabs[0]
-        setActiveIdState(activeTab.id)
+      // First run (or nothing remembered): open the first existing query, or
+      // create Default/Query 1.sql. list_workspaces also runs the root→Default migration.
+      if (openPaths.length === 0) {
+        const wss = await invoke<WorkspaceMeta[]>('list_workspaces').catch(() => [] as WorkspaceMeta[])
+        const first = wss.flatMap(w => w.queries)[0]
+        openPaths = first
+          ? [first.path]
+          : [await invoke<string>('create_query', { workspace: 'Default', name: 'Query 1' })]
       }
+
+      let nextId = 1
+      const queryTabs: Tab[] = []
+      for (const path of openPaths) {
+        const content = await invoke<string>('read_query_file', { path }).catch(() => null)
+        if (content === null) continue // deleted out from under us — drop it
+        queryTabs.push({
+          id: nextId++, title: stemOf(path), filePath: path, workspace: workspaceOf(path),
+          content, isDirty: false,
+          connectionId: connMap[path]?.id, connectionName: connMap[path]?.name, database: connMap[path]?.database,
+        })
+      }
+      if (queryTabs.length === 0) {
+        const path = await invoke<string>('create_query', { workspace: 'Default', name: 'Query 1' })
+        queryTabs.push({ id: nextId++, title: stemOf(path), filePath: path, workspace: workspaceOf(path), content: '', isDirty: false })
+      }
+
+      const specialMeta: Array<Partial<Tab> & { type: string }> = specialRaw ? JSON.parse(specialRaw) : []
+      const specialTabs: Tab[] = specialMeta.map(m => ({
+        id: nextId++, title: m.title ?? '', filePath: '', content: '', isDirty: false,
+        type: m.type as Tab['type'], ...(m as Partial<Tab>),
+      }))
+
+      nextIdRef.current = nextId
+      const allTabs = [...queryTabs, ...specialTabs]
+      setTabs(allTabs)
+      const active = allTabs.find(t => t.filePath && t.filePath === activePath) ?? allTabs[0]
+      setActiveIdState(active.id)
     } catch (e) {
       console.error('Session restore failed:', e)
       setTabs([{ id: 1, title: 'Query 1', filePath: '', content: '', isDirty: false }])
@@ -123,46 +146,53 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
   const setActiveId = useCallback((id: number) => {
     setActiveIdState(id)
     const tab = tabsRef.current.find(t => t.id === id)
-    if (tab) {
-      invoke('set_setting', { key: 'active_query_file', value: tab.title }).catch(() => {})
-    }
+    if (tab?.filePath) persistActivePath(tab.filePath)
   }, [])
+
+  // ── Open an existing query (focus if already open) ────────────────────────
+  const openQueryByPath = useCallback(async (path: string) => {
+    const open = tabsRef.current.find(t => t.filePath === path)
+    if (open) { setActiveId(open.id); return }
+    const content = await invoke<string>('read_query_file', { path }).catch(() => null)
+    if (content === null) return // stale entry
+    const id = nextIdRef.current++
+    setTabs(prev => {
+      const next = [...prev, { id, title: stemOf(path), filePath: path, workspace: workspaceOf(path), content, isDirty: false }]
+      persistOpenTabs(next)
+      return next
+    })
+    setActiveIdState(id)
+    persistActivePath(path)
+  }, [setActiveId])
+
+  // ── Create a query in a workspace and open it ─────────────────────────────
+  const createQuery = useCallback(async (workspace: string, title?: string) => {
+    // Default name: next free "Query N" among currently-open titles (backend
+    // still guarantees filesystem uniqueness within the workspace).
+    let name = title
+    if (!name) {
+      const taken = new Set(tabsRef.current.map(t => t.title))
+      let n = 1
+      while (taken.has(`Query ${n}`)) n++
+      name = `Query ${n}`
+    }
+    const path = await invoke<string>('create_query', { workspace, name }).catch(e => {
+      console.error('Failed to create query:', e); return null
+    })
+    if (path) await openQueryByPath(path)
+  }, [openQueryByPath])
 
   const openQueryTab = useCallback(async () => {
-    try {
-      const dir = await invoke<string>('get_queries_dir')
-      const existing = new Set(tabsRef.current.map(t => t.title))
-      let n = tabsRef.current.length + 1
-      while (existing.has(`Query ${n}`)) n++
-      const title = `Query ${n}`
-      const filePath = `${dir}/${title}.sql`
-      await invoke('write_query_file', { path: filePath, content: '' })
-      const id = nextIdRef.current++
-      setTabs(prev => [...prev, { id, title, filePath, content: '', isDirty: false }])
-      setActiveIdState(id)
-      invoke('set_setting', { key: 'active_query_file', value: title }).catch(() => {})
-    } catch (e) {
-      console.error('Failed to create query tab:', e)
-    }
-  }, [])
-
-  const persistSpecialTabs = (tabs: Tab[]) => {
-    const specials = tabs
-      .filter(t => t.type && t.type !== 'query')
-      .map(t => ({ ...t }))
-    invoke('set_setting', { key: 'open_special_tabs', value: JSON.stringify(specials) }).catch(() => {})
-  }
+    const active = tabsRef.current.find(t => t.id === activeIdRef.current)
+    await createQuery(active?.workspace ?? 'Default')
+  }, [createQuery])
 
   const openSpecialTab = useCallback((type: Tab['type'], title: string, extra?: Partial<Tab>) => {
     const existing = tabsRef.current.find(t => {
       if (t.type !== type) return false
-      if (t.connectionId !== (extra as any)?.connectionId) return false
-      if (type === 'table-details') {
-        return (t as any).schema === (extra as any)?.schema && (t as any).table === (extra as any)?.table
-      }
-      if (type === 'schema-details') {
-        return (t as any).schema === (extra as any)?.schema
-      }
+      if (t.connectionId !== (extra as { connectionId?: string } | undefined)?.connectionId) return false
+      if (type === 'table-details') return (t as Tab & { schema?: string; table?: string }).schema === (extra as { schema?: string })?.schema && (t as Tab & { table?: string }).table === (extra as { table?: string })?.table
+      if (type === 'schema-details') return (t as Tab & { schema?: string }).schema === (extra as { schema?: string })?.schema
       return true
     })
     if (existing) { setActiveIdState(existing.id); return }
@@ -175,39 +205,43 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
     setActiveIdState(id)
   }, [])
 
+  // ── Close a tab — keeps the saved query file (delete is a workspace action) ─
   const closeTab = useCallback((id: number) => {
     const existing = saveTimers.current.get(id)
     if (existing) clearTimeout(existing)
     saveTimers.current.delete(id)
 
-    const tab = tabsRef.current.find(t => t.id === id)
-    // Delete the file so it doesn't reappear on next app launch
-    if (tab?.filePath && (!tab.type || tab.type === 'query')) {
-      invoke('delete_query_file', { path: tab.filePath }).catch(() => {})
-    }
-
     setTabs(prev => {
       if (prev.length <= 1) return prev
       const idx  = prev.findIndex(t => t.id === id)
+      if (idx === -1) return prev
       const next = prev.filter(t => t.id !== id)
       if (id === activeIdRef.current) {
         const newActive = next[Math.min(idx, next.length - 1)]
         if (newActive) {
           setActiveIdState(newActive.id)
-          invoke('set_setting', { key: 'active_query_file', value: newActive.title }).catch(() => {})
+          if (newActive.filePath) persistActivePath(newActive.filePath)
         }
       }
+      persistOpenTabs(next)
       persistSpecialTabs(next)
       return next
     })
   }, [])
 
+  const closeQueryByPath = useCallback((path: string) => {
+    const tab = tabsRef.current.find(t => t.filePath === path)
+    if (tab) closeTab(tab.id)
+  }, [closeTab])
+
+  const closeWorkspaceTabs = useCallback((workspace: string) => {
+    tabsRef.current.filter(t => t.workspace === workspace).forEach(t => closeTab(t.id))
+  }, [closeTab])
+
   const updateContent = useCallback((id: number, content: string) => {
     setTabs(prev => prev.map(t => t.id === id ? { ...t, content, isDirty: true } : t))
-
     const existing = saveTimers.current.get(id)
     if (existing) clearTimeout(existing)
-
     const timer = setTimeout(async () => {
       saveTimers.current.delete(id)
       const tab = tabsRef.current.find(t => t.id === id)
@@ -217,50 +251,38 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
         setTabs(prev => prev.map(t => t.id === id ? { ...t, isDirty: false } : t))
       } catch (e) {
         console.error(`Save failed for tab ${id}:`, e)
-        // isDirty stays true — content still in memory
       }
     }, 800)
-
     saveTimers.current.set(id, timer)
   }, [])
 
+  // ── Rename: moves the file within its workspace, keeping history ──────────
   const renameTab = useCallback(async (id: number, newTitle: string) => {
     const existing = saveTimers.current.get(id)
-    if (existing) {
-      clearTimeout(existing)
-      saveTimers.current.delete(id)
-    }
+    if (existing) { clearTimeout(existing); saveTimers.current.delete(id) }
     const tab = tabsRef.current.find(t => t.id === id)
-    if (!tab || tab.title === newTitle || !newTitle.trim()) return
-    // Flush pending unsaved content before renaming
-    if (tab.filePath && tab.isDirty) {
+    if (!tab || !tab.filePath || tab.title === newTitle || !newTitle.trim()) return
+    if (tab.isDirty) {
       try {
         await invoke('write_query_file', { path: tab.filePath, content: tab.content })
         setTabs(prev => prev.map(t => t.id === id ? { ...t, isDirty: false } : t))
-      } catch {
-        // Non-fatal: proceed with rename even if flush fails
-      }
+      } catch { /* non-fatal */ }
     }
     const dir = tab.filePath.substring(0, tab.filePath.lastIndexOf('/'))
     const newPath = `${dir}/${newTitle}.sql`
     try {
       await invoke('rename_query_file', { oldPath: tab.filePath, newPath })
-      setTabs(prev => prev.map(t => t.id === id ? { ...t, title: newTitle, filePath: newPath } : t))
-      invoke('set_setting', { key: 'active_query_file', value: newTitle }).catch(() => {})
+      setTabs(prev => {
+        const next = prev.map(t => t.id === id ? { ...t, title: newTitle, filePath: newPath } : t)
+        persistOpenTabs(next)
+        persistConnMap(next)
+        return next
+      })
+      persistActivePath(newPath)
     } catch (e) {
       console.error('Rename failed:', e)
-      // title reverts — state unchanged
     }
   }, [])
-
-  const persistConnMap = (tabs: Tab[]) => {
-    const map: Record<string, { id: string; name: string; database?: string }> = {}
-    tabs.forEach(t => {
-      if (t.connectionId && t.connectionName)
-        map[t.title] = { id: t.connectionId, name: t.connectionName, database: t.database }
-    })
-    invoke('set_setting', { key: 'tab_query_connections', value: JSON.stringify(map) }).catch(() => {})
-  }
 
   const setTabConnection = useCallback((id: number, connectionId: string | undefined, connectionName: string | undefined) => {
     setTabs(prev => {
@@ -285,7 +307,8 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
   return (
     <TabsContext.Provider value={{
       tabs, activeId, restored,
-      setActiveId, openQueryTab, openSpecialTab, closeTab, updateContent, renameTab, reloadTabs: loadTabs,
+      setActiveId, openQueryTab, createQuery, openQueryByPath, closeQueryByPath, closeWorkspaceTabs,
+      openSpecialTab, closeTab, updateContent, renameTab, reloadTabs: loadTabs,
       setTabConnection, setTabDatabase, setTabQueryLimit,
     }}>
       {children}

@@ -7,6 +7,8 @@ export interface Tab {
   content:      string
   isDirty:      boolean
   type?:        TabType
+  /** Name of the workspace (queries_dir subfolder) this query belongs to. */
+  workspace?:   string
   connectionId?: string
   connectionName?: string
   database?: string

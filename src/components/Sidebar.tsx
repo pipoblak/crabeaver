@@ -1,6 +1,7 @@
 import { useState, memo } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useConnections } from '@/context/ConnectionContext'
+import WorkspacesSection from '@/components/WorkspacesSection'
 import { capabilitiesFor, descriptorFor } from '@/connectors/registry'
 import { cacheGet, cacheSet, cacheDelete } from '@/lib/cache'
 import { timeAgo } from '@/lib/timeAgo'
@@ -334,7 +335,7 @@ export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
       </div>
 
       {/* Tree */}
-      <div className="flex flex-col flex-1 overflow-y-auto">
+      <div className="flex flex-col flex-1 min-h-0 overflow-y-auto">
         {connections.length === 0 && (
           <div className="flex flex-col items-center justify-center flex-1 px-4">
             <p className="text-[11px] text-center text-th-dim">No connections yet.<br />Click + to add one.</p>
@@ -483,6 +484,9 @@ export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
           )
         })}
       </div>
+
+      {/* Workspaces — saved queries grouped by folder */}
+      <WorkspacesSection />
 
       {/* Status */}
       {status && <StatusBar status={status} />}
