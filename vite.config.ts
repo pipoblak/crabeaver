@@ -12,7 +12,10 @@ export default defineConfig({
   },
   clearScreen: false,
   server: {
-    port: 5173,
+    // App-specific dev port (Tauri's conventional default) — avoids colliding
+    // with Vite's ubiquitous 5173 used by other projects. strictPort fails fast
+    // instead of silently moving, so it can never mismatch tauri.conf's devUrl.
+    port: 1420,
     strictPort: true,
     watch: { ignored: ['**/src-tauri/**'] },
   },
