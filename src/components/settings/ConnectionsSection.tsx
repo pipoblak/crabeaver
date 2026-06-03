@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Plus, Trash2, Plug, PlugZap, Loader2, CheckCircle, XCircle, Fingerprint } from 'lucide-react'
+import { Plus, Trash2, Plug, PlugZap, Loader2, CheckCircle, XCircle, Fingerprint, Check, X } from 'lucide-react'
 import { CONNECTORS, descriptorFor } from '@/connectors/registry'
 import { cacheGet, cacheSet, cacheDelete } from '@/lib/cache'
 
@@ -31,6 +31,7 @@ export default function ConnectionsSection({ initialConnectionId }: { initialCon
   const [saving, setSaving]           = useState(false)
   const [bioStatus, setBioStatus]     = useState<string | null>(null)
   const [connectedIds, setConnected]  = useState(new Set<string>())
+  const [confirmId, setConfirmId]     = useState<string | null>(null)   // connection pending delete
   const [toast, setToast]             = useState<{ ok: boolean; msg: string } | null>(null)
   const [pwdSaved, setPwdSaved]       = useState(true)
   const toastTimer                    = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -126,8 +127,7 @@ export default function ConnectionsSection({ initialConnectionId }: { initialCon
   }
 
   const remove = async (id: string) => {
-    const name = connections.find(c => c.id === id)?.name ?? 'this connection'
-    if (!window.confirm(`Delete connection "${name}"? This also removes its saved password.`)) return
+    setConfirmId(null)
     await invoke('delete_connection', { id }).catch(() => {})
     cacheDelete('has-password', id)
     setConnections(prev => prev.filter(c => c.id !== id))
@@ -176,14 +176,23 @@ export default function ConnectionsSection({ initialConnectionId }: { initialCon
             >
               <span className="shrink-0 w-2 h-2 rounded-full" style={{ background: connected ? '#22c55e' : 'var(--text-dim)' }} />
               <span className="truncate flex-1">{c.name || 'Untitled'}</span>
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button onClick={e => { e.stopPropagation(); toggleConnect(c) }} title={connected ? 'Disconnect' : 'Connect'} className="text-th-dim hover:text-th-accent transition-colors">
-                  {connected ? <PlugZap size={11} /> : <Plug size={11} />}
-                </button>
-                <button onClick={e => { e.stopPropagation(); remove(c.id) }} title="Delete" className="text-th-dim hover:text-th-err transition-colors">
-                  <Trash2 size={11} />
-                </button>
-              </div>
+              {confirmId === c.id ? (
+                <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                  <span className="text-[10px] text-th-dim">Delete?</span>
+                  <button onClick={e => { e.stopPropagation(); remove(c.id) }} title="Confirm delete — also removes the saved password"
+                    className="hover:opacity-75" style={{ color: 'var(--error-text, #f87171)' }}><Check size={12} /></button>
+                  <button onClick={e => { e.stopPropagation(); setConfirmId(null) }} title="Cancel" className="text-th-dim hover:text-th-text"><X size={12} /></button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button onClick={e => { e.stopPropagation(); toggleConnect(c) }} title={connected ? 'Disconnect' : 'Connect'} className="text-th-dim hover:text-th-accent transition-colors">
+                    {connected ? <PlugZap size={11} /> : <Plug size={11} />}
+                  </button>
+                  <button onClick={e => { e.stopPropagation(); setConfirmId(c.id) }} title="Delete" className="text-th-dim hover:text-th-err transition-colors">
+                    <Trash2 size={11} />
+                  </button>
+                </div>
+              )}
             </div>
           )
         })}

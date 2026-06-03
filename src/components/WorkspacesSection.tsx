@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronRight, ChevronDown, Folder, FolderOpen, FileText, Plus, Trash2 } from 'lucide-react'
+import { ChevronRight, ChevronDown, Folder, FolderOpen, FileText, Plus, Trash2, Check, X } from 'lucide-react'
 import { useWorkspaces, type Workspace } from '@/hooks/useWorkspaces'
 import { useTabs } from '@/context/TabsContext'
 import ResizeHandle from '@/components/ResizeHandle'
@@ -36,6 +36,7 @@ export default function WorkspacesSection() {
   const [creatingWs, setCreatingWs] = useState(false)
   const [creatingIn, setCreatingIn] = useState<string | null>(null)      // workspace name
   const [renaming, setRenaming] = useState<string | null>(null)          // `ws:<name>` or `q:<path>`
+  const [confirming, setConfirming] = useState<string | null>(null)      // `ws:<name>` or `q:<path>` pending delete
   const [hover, setHover] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -51,15 +52,28 @@ export default function WorkspacesSection() {
     setCreatingIn(null)
     try { const path = await createQuery(ws, name); await openQueryByPath(path) } catch (e) { flash(e) }
   }
-  const removeQuery = (path: string) => {
-    const name = (path.split('/').pop() ?? path).replace(/\.sql$/i, '')
-    if (!window.confirm(`Delete query "${name}"?`)) return
-    closeQueryByPath(path); run(deleteQuery(path))
+  // Two-step delete with an inline ✓/✕ confirm (native window.confirm is a no-op
+  // in the Tauri webview).
+  const confirmDelete = () => {
+    const key = confirming
+    setConfirming(null)
+    if (!key) return
+    if (key.startsWith('q:')) {
+      const path = key.slice(2)
+      closeQueryByPath(path); run(deleteQuery(path))
+    } else if (key.startsWith('ws:')) {
+      const name = key.slice(3)
+      closeWorkspaceTabs(name); run(deleteWorkspace(name))
+    }
   }
-  const removeWorkspace = (name: string) => {
-    if (!window.confirm(`Delete workspace "${name}" and all its queries?`)) return
-    closeWorkspaceTabs(name); run(deleteWorkspace(name))
-  }
+  const ConfirmButtons = () => (
+    <span className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
+      <button title="Confirm delete" className="hover:opacity-75" style={{ color: 'var(--error-text, #f87171)' }}
+        onClick={e => { e.stopPropagation(); confirmDelete() }}><Check size={11} /></button>
+      <button title="Cancel" className="text-th-dim hover:text-th-text"
+        onClick={e => { e.stopPropagation(); setConfirming(null) }}><X size={11} /></button>
+    </span>
+  )
   const doRenameQuery = (oldPath: string, newName: string) => {
     setRenaming(null)
     const dir = oldPath.slice(0, oldPath.lastIndexOf('/'))
@@ -121,14 +135,16 @@ export default function WorkspacesSection() {
                   <span className="text-[12px] text-th-text truncate flex-1"
                     onDoubleClick={e => { e.stopPropagation(); setRenaming(`ws:${ws.name}`) }}>{ws.name}</span>
                 )}
-                {hover === `ws:${ws.name}` && renaming !== `ws:${ws.name}` && (
+                {confirming === `ws:${ws.name}` ? (
+                  <ConfirmButtons />
+                ) : hover === `ws:${ws.name}` && renaming !== `ws:${ws.name}` && (
                   <span className="flex items-center gap-1 shrink-0">
                     <button title="New query" className="text-th-dim hover:text-th-accent"
                       onClick={e => { e.stopPropagation(); setExpanded(s => new Set(s).add(ws.name)); setCreatingIn(ws.name) }}>
                       <Plus size={11} />
                     </button>
                     <button title="Delete workspace" className="text-th-dim hover:text-th-accent"
-                      onClick={e => { e.stopPropagation(); removeWorkspace(ws.name) }}>
+                      onClick={e => { e.stopPropagation(); setConfirming(`ws:${ws.name}`) }}>
                       <Trash2 size={10} />
                     </button>
                   </span>
@@ -166,9 +182,11 @@ export default function WorkspacesSection() {
                             style={{ color: isActive ? 'var(--text-bright)' : 'var(--text)' }}
                             onDoubleClick={e => { e.stopPropagation(); setRenaming(`q:${q.path}`) }}>{q.name}</span>
                         )}
-                        {hover === `q:${q.path}` && renaming !== `q:${q.path}` && (
+                        {confirming === `q:${q.path}` ? (
+                          <ConfirmButtons />
+                        ) : hover === `q:${q.path}` && renaming !== `q:${q.path}` && (
                           <button title="Delete query" className="text-th-dim hover:text-th-accent shrink-0"
-                            onClick={e => { e.stopPropagation(); removeQuery(q.path) }}>
+                            onClick={e => { e.stopPropagation(); setConfirming(`q:${q.path}`) }}>
                             <Trash2 size={10} />
                           </button>
                         )}
