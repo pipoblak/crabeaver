@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use rand::Rng;
 
-use crate::domain::mcp::McpConnFlags;
+use crate::domain::mcp::{McpConnFlags, SqlKind};
 use crate::infrastructure::database::AppState;
 
 const KEY_PORT: &str = "mcp_port";
@@ -86,10 +86,134 @@ pub async fn set_flags(state: &AppState, id: &str, f: McpConnFlags) {
     }
 }
 
+/// Classify SQL as Read or Write by AST (not regex). Read = every statement is a
+/// SELECT/WITH…SELECT or EXPLAIN/SHOW. Anything else — or an unparseable/empty
+/// string — is Write (fail closed).
+pub fn classify(sql: &str) -> SqlKind {
+    use sqlparser::ast::Statement;
+    use sqlparser::dialect::GenericDialect;
+    use sqlparser::parser::Parser;
+
+    let stmts = match Parser::parse_sql(&GenericDialect {}, sql) {
+        Ok(s) if !s.is_empty() => s,
+        _ => return SqlKind::Write,
+    };
+    let all_read = stmts.iter().all(|s| {
+        matches!(
+            s,
+            Statement::Query(_)
+                | Statement::Explain { .. }
+                | Statement::ExplainTable { .. }
+                | Statement::ShowVariable { .. }
+                | Statement::ShowVariables { .. }
+                | Statement::ShowTables { .. }
+                | Statement::ShowColumns { .. }
+        )
+    });
+    if all_read { SqlKind::Read } else { SqlKind::Write }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GateError {
+    /// Connection is not exposed — reported to the agent as "unknown connection".
+    Unknown,
+    WriteNotAllowed,
+}
+
+impl GateError {
+    pub fn message(self) -> &'static str {
+        match self {
+            GateError::Unknown => "unknown connection",
+            GateError::WriteNotAllowed => "writes not enabled for this connection",
+        }
+    }
+}
+
+/// Enforce exposure + write authorization for a tool call on `connection_id`.
+pub fn authorize(
+    flags: &HashMap<String, McpConnFlags>,
+    connection_id: &str,
+    kind: SqlKind,
+) -> Result<(), GateError> {
+    let f = flags
+        .get(connection_id)
+        .filter(|f| f.expose)
+        .ok_or(GateError::Unknown)?;
+    match kind {
+        SqlKind::Read => Ok(()),
+        SqlKind::Write if f.allow_write => Ok(()),
+        SqlKind::Write => Err(GateError::WriteNotAllowed),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::mcp::McpConnFlags;
+    use crate::domain::mcp::{McpConnFlags, SqlKind};
+
+    fn k(sql: &str) -> SqlKind {
+        classify(sql)
+    }
+
+    #[test]
+    fn reads_are_read() {
+        assert_eq!(k("SELECT 1"), SqlKind::Read);
+        assert_eq!(k("select * from users where id = 1"), SqlKind::Read);
+        assert_eq!(k("WITH x AS (SELECT 1) SELECT * FROM x"), SqlKind::Read);
+        assert_eq!(k("EXPLAIN SELECT 1"), SqlKind::Read);
+    }
+
+    #[test]
+    fn writes_are_write() {
+        assert_eq!(k("INSERT INTO t VALUES (1)"), SqlKind::Write);
+        assert_eq!(k("UPDATE t SET a = 1"), SqlKind::Write);
+        assert_eq!(k("DELETE FROM t"), SqlKind::Write);
+        assert_eq!(k("DROP TABLE t"), SqlKind::Write);
+        assert_eq!(k("CREATE TABLE t (a int)"), SqlKind::Write);
+    }
+
+    #[test]
+    fn mixed_multistatement_is_write() {
+        assert_eq!(k("SELECT 1; DELETE FROM t"), SqlKind::Write);
+    }
+
+    #[test]
+    fn string_literal_payload_does_not_fool_it() {
+        assert_eq!(k("SELECT '; DROP TABLE t'"), SqlKind::Read);
+    }
+
+    #[test]
+    fn unparseable_or_empty_is_write_fail_closed() {
+        assert_eq!(k(""), SqlKind::Write);
+        assert_eq!(k("this is not sql @@@"), SqlKind::Write);
+    }
+
+    fn flags_of(expose: bool, allow_write: bool) -> HashMap<String, McpConnFlags> {
+        let mut m = HashMap::new();
+        m.insert("c1".to_string(), McpConnFlags { expose, allow_write });
+        m
+    }
+
+    #[test]
+    fn unexposed_connection_is_unknown() {
+        let f = flags_of(false, false);
+        assert_eq!(authorize(&f, "c1", SqlKind::Read).unwrap_err(), GateError::Unknown);
+        assert_eq!(authorize(&f, "missing", SqlKind::Read).unwrap_err(), GateError::Unknown);
+    }
+
+    #[test]
+    fn read_allowed_on_exposed() {
+        let f = flags_of(true, false);
+        assert!(authorize(&f, "c1", SqlKind::Read).is_ok());
+    }
+
+    #[test]
+    fn write_blocked_unless_allowed() {
+        let f = flags_of(true, false);
+        assert_eq!(authorize(&f, "c1", SqlKind::Write).unwrap_err(), GateError::WriteNotAllowed);
+        let f2 = flags_of(true, true);
+        assert!(authorize(&f2, "c1", SqlKind::Write).is_ok());
+    }
 
     #[test]
     fn generated_token_has_prefix_and_length() {
