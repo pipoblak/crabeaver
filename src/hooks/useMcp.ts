@@ -1,6 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
 
 export interface McpStatus { running: boolean; port: number; url: string; has_token: boolean }
 export interface ClientTarget { id: string; name: string; installed: boolean; detected: boolean; can_setup: boolean }
@@ -31,12 +30,13 @@ export function useMcp() {
 
   useEffect(() => { refresh() }, [refresh])
 
-  // Live activity: prepend each broadcast entry (newest-first).
+  // Live-ish activity: poll the ring buffer (avoids needing event:listen perms).
   useEffect(() => {
-    const un = listen<ActivityEntry>('mcp-activity', e => {
-      setActivity(prev => [e.payload, ...prev].slice(0, ACTIVITY_MAX))
-    })
-    return () => { un.then(f => f()) }
+    const id = setInterval(async () => {
+      const a = await invoke<ActivityEntry[]>('mcp_recent_activity').catch(() => null)
+      if (a) setActivity([...a].reverse().slice(0, ACTIVITY_MAX))
+    }, 2000)
+    return () => clearInterval(id)
   }, [])
 
   const start = useCallback(async () => { setStatus(await invoke<McpStatus>('mcp_start')) }, [])

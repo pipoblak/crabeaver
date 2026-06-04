@@ -77,13 +77,22 @@ fn claude_code_present() -> bool {
         .unwrap_or(false)
 }
 
+/// True when Claude Code already has the `crabeaver` MCP server configured.
+fn claude_code_has_crabeaver() -> bool {
+    std::process::Command::new("claude")
+        .args(["mcp", "get", "crabeaver"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 pub fn list() -> Vec<ClientTarget> {
     let cc = claude_code_present();
     let mut out = vec![ClientTarget {
         id: "claude-code".into(),
         name: "Claude Code".into(),
         detected: cc,
-        installed: false,
+        installed: cc && claude_code_has_crabeaver(),
         can_setup: cc,
     }];
     for (id, name, path) in json_clients() {
