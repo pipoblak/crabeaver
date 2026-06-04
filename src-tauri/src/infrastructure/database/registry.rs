@@ -12,6 +12,7 @@ use crate::infrastructure::database::sqlite::SqliteDriver;
 ///
 /// To add an engine: implement `DatabaseDriver`, add a field here, construct it
 /// in `new`, and add its `Driver` arm to `driver_for`. Nothing else dispatches.
+#[derive(Clone)]
 pub struct DriverRegistry {
     postgres: Arc<dyn DatabaseDriver>,
     sqlite:   Arc<dyn DatabaseDriver>,

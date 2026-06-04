@@ -25,6 +25,7 @@ pub type SchemaIndexStore = Arc<RwLock<HashMap<String, SchemaIndex>>>;
 /// Shared application state managed by Tauri. Engine-agnostic: query execution,
 /// pooling, and per-query cancellation all live inside the drivers held by
 /// `drivers`, not here.
+#[derive(Clone)]
 pub struct AppState {
     /// App settings/connections store (SQLite).
     pub db:              SqlitePool,
@@ -34,4 +35,6 @@ pub struct AppState {
     pub biometric_lock:  Arc<Mutex<()>>,
     /// Per-connection table indices used by SQL validation.
     pub schema_indices:  SchemaIndexStore,
+    /// Running MCP server control: `Some(sender)` while running. Sending `()` shuts it down.
+    pub mcp_shutdown:    Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
 }
