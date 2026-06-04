@@ -14,6 +14,10 @@ use commands::connections::{
     list_connections, list_databases, ping_connection, test_connection, update_connection,
 };
 use commands::marketplace::{install_theme, search_marketplace};
+use commands::mcp::{
+    mcp_connection_flags, mcp_get_token, mcp_list_clients, mcp_rotate_token, mcp_set_connection_flags,
+    mcp_set_port, mcp_setup_client, mcp_start, mcp_status, mcp_stop,
+};
 use commands::queries::{
     create_query, create_workspace, delete_query_file, delete_workspace, get_queries_dir,
     list_query_files, list_workspaces, read_query_file, rename_query_file, rename_workspace,
@@ -130,6 +134,9 @@ pub fn run() {
             // Workspaces
             list_workspaces, create_workspace, rename_workspace, delete_workspace, create_query,
             search_queries,
+            // MCP server
+            mcp_status, mcp_start, mcp_stop, mcp_rotate_token, mcp_get_token, mcp_set_port,
+            mcp_set_connection_flags, mcp_connection_flags, mcp_list_clients, mcp_setup_client,
         ])
         .run(tauri::generate_context!())
         .expect("error running tauri app");
