@@ -38,6 +38,7 @@ async fn state_with_conn(data_path: &str) -> AppState {
         biometric_lock: Arc::new(Mutex::new(())),
         schema_indices: Arc::new(RwLock::new(HashMap::new())),
         mcp_shutdown: Arc::new(Mutex::new(None)),
+        mcp_activity: Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())),
     }
 }
 

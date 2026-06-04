@@ -12,12 +12,17 @@ use tokio::sync::oneshot;
 
 use super::auth::header_ok;
 use crate::application::mcp as app;
+use crate::domain::mcp::McpActivityEntry;
 use crate::infrastructure::database::AppState;
+
+/// Called once per tool invocation so the host can record + broadcast activity.
+pub type ActivitySink = Arc<dyn Fn(McpActivityEntry) + Send + Sync>;
 
 #[derive(Clone)]
 struct Ctx {
     state: Arc<AppState>,
     token: String,
+    sink: ActivitySink,
 }
 
 /// Tool JSON Schemas advertised by `tools/list`.
@@ -83,7 +88,24 @@ async fn handle_post(State(ctx): State<Ctx>, headers: HeaderMap, Json(req): Json
         "tools/call" => {
             let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
-            match call_tool(&ctx.state, name, &args).await {
+            let connection = args.get("connection_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let outcome = call_tool(&ctx.state, name, &args).await;
+
+            // Record activity (newest-last) and let the host broadcast it.
+            let summary = match &outcome {
+                Ok(v) => v.get("row_count").and_then(|n| n.as_u64())
+                    .map(|n| format!("{n} rows"))
+                    .unwrap_or_else(|| "ok".into()),
+                Err(e) => format!("error: {e}"),
+            };
+            (ctx.sink)(McpActivityEntry {
+                at: chrono::Utc::now().timestamp_millis(),
+                tool: name.to_string(),
+                connection,
+                summary,
+            });
+
+            match outcome {
                 Ok(v) => Ok(json!({ "content": [{ "type": "text", "text": v.to_string() }], "isError": false })),
                 // Tool-level error: a tool result with isError, not a JSON-RPC error.
                 Err(e) => Ok(json!({ "content": [{ "type": "text", "text": e }], "isError": true })),
@@ -105,8 +127,9 @@ pub async fn start(
     state: Arc<AppState>,
     port: u16,
     token: String,
+    sink: ActivitySink,
 ) -> Result<(u16, oneshot::Sender<()>), String> {
-    let ctx = Ctx { state, token };
+    let ctx = Ctx { state, token, sink };
     let router = Router::new()
         .route("/mcp", post(handle_post).get(|| async { StatusCode::METHOD_NOT_ALLOWED }))
         .with_state(ctx);

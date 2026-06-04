@@ -24,13 +24,15 @@ async fn test_state() -> AppState {
         biometric_lock: Arc::new(Mutex::new(())),
         schema_indices: Arc::new(RwLock::new(HashMap::new())),
         mcp_shutdown: Arc::new(Mutex::new(None)),
+        mcp_activity: Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())),
     }
 }
 
 #[tokio::test]
 async fn missing_or_wrong_token_is_401_correct_is_200() {
     let state = Arc::new(test_state().await);
-    let (port, _shutdown) = server::start(state, 0, "secret".into()).await.unwrap();
+    let sink: server::ActivitySink = Arc::new(|_| {});
+    let (port, _shutdown) = server::start(state, 0, "secret".into(), sink).await.unwrap();
     let url = format!("http://127.0.0.1:{port}/mcp");
     let client = reqwest::Client::new();
     let body = serde_json::json!({ "jsonrpc":"2.0","id":1,"method":"tools/list" });

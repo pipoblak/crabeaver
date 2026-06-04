@@ -1,12 +1,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::application::mcp as app;
-use crate::domain::mcp::{McpConnFlags, McpStatus};
+use crate::domain::mcp::{McpActivityEntry, McpConnFlags, McpStatus};
 use crate::infrastructure::database::AppState;
+use crate::infrastructure::mcp::server::ActivitySink;
 use crate::infrastructure::mcp::{clients, server};
+
+const ACTIVITY_CAP: usize = 100;
 
 fn url(port: u16) -> String {
     format!("http://127.0.0.1:{port}/mcp")
@@ -20,7 +23,7 @@ pub async fn mcp_status(state: State<'_, AppState>) -> Result<McpStatus, String>
 }
 
 #[tauri::command]
-pub async fn mcp_start(state: State<'_, AppState>) -> Result<McpStatus, String> {
+pub async fn mcp_start(app_handle: AppHandle, state: State<'_, AppState>) -> Result<McpStatus, String> {
     if state.mcp_shutdown.lock().await.is_some() {
         return Err("already running".into());
     }
@@ -29,9 +32,28 @@ pub async fn mcp_start(state: State<'_, AppState>) -> Result<McpStatus, String> 
     // Cheap clone: AppState's fields are pools/Arc-shared, so the server task sees
     // the same connections and settings DB as the app.
     let shared: Arc<AppState> = Arc::new(state.inner().clone());
-    let (bound, tx) = server::start(shared, port, token).await?;
+
+    // Activity sink: push to the ring buffer + broadcast a `mcp-activity` event.
+    let buf = state.mcp_activity.clone();
+    let sink: ActivitySink = Arc::new(move |entry: McpActivityEntry| {
+        if let Ok(mut b) = buf.lock() {
+            b.push_back(entry.clone());
+            while b.len() > ACTIVITY_CAP {
+                b.pop_front();
+            }
+        }
+        let _ = app_handle.emit("mcp-activity", entry);
+    });
+
+    let (bound, tx) = server::start(shared, port, token, sink).await?;
     *state.mcp_shutdown.lock().await = Some(tx);
     Ok(McpStatus { running: true, port: bound, url: url(bound), has_token: true })
+}
+
+#[tauri::command]
+pub async fn mcp_recent_activity(state: State<'_, AppState>) -> Result<Vec<McpActivityEntry>, String> {
+    let b = state.mcp_activity.lock().map_err(|_| "activity lock poisoned".to_string())?;
+    Ok(b.iter().cloned().collect())
 }
 
 #[tauri::command]

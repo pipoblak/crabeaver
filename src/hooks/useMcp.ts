@@ -1,28 +1,43 @@
 import { useState, useCallback, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 
 export interface McpStatus { running: boolean; port: number; url: string; has_token: boolean }
 export interface ClientTarget { id: string; name: string; installed: boolean; detected: boolean; can_setup: boolean }
+export interface ActivityEntry { at: number; tool: string; connection: string; summary: string }
 export type ConnFlags = Record<string, { expose: boolean; allow_write: boolean }>
+
+const ACTIVITY_MAX = 100
 
 export function useMcp() {
   const [status, setStatus] = useState<McpStatus | null>(null)
   const [token, setToken] = useState<string | null>(null)
   const [clients, setClients] = useState<ClientTarget[]>([])
   const [flags, setFlags] = useState<ConnFlags>({})
+  const [activity, setActivity] = useState<ActivityEntry[]>([])
 
   const refresh = useCallback(async () => {
-    const [s, t, c, f] = await Promise.all([
+    const [s, t, c, f, a] = await Promise.all([
       invoke<McpStatus>('mcp_status').catch(() => null),
       invoke<string | null>('mcp_get_token').catch(() => null),
       invoke<ClientTarget[]>('mcp_list_clients').catch(() => []),
       invoke<ConnFlags>('mcp_connection_flags').catch(() => ({})),
+      invoke<ActivityEntry[]>('mcp_recent_activity').catch(() => []),
     ])
     if (s) setStatus(s)
     setToken(t); setClients(c); setFlags(f)
+    setActivity([...a].reverse()) // backend stores newest-last; show newest-first
   }, [])
 
   useEffect(() => { refresh() }, [refresh])
+
+  // Live activity: prepend each broadcast entry (newest-first).
+  useEffect(() => {
+    const un = listen<ActivityEntry>('mcp-activity', e => {
+      setActivity(prev => [e.payload, ...prev].slice(0, ACTIVITY_MAX))
+    })
+    return () => { un.then(f => f()) }
+  }, [])
 
   const start = useCallback(async () => { setStatus(await invoke<McpStatus>('mcp_start')) }, [])
   const stop  = useCallback(async () => { setStatus(await invoke<McpStatus>('mcp_stop')) }, [])
@@ -33,5 +48,5 @@ export function useMcp() {
     await invoke('mcp_set_connection_flags', { connectionId, expose, allowWrite }); await refresh()
   }, [refresh])
 
-  return { status, token, clients, flags, refresh, start, stop, rotate, setPort, setupClient, setConnFlags }
+  return { status, token, clients, flags, activity, refresh, start, stop, rotate, setPort, setupClient, setConnFlags }
 }

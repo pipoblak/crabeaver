@@ -37,4 +37,7 @@ pub struct AppState {
     pub schema_indices:  SchemaIndexStore,
     /// Running MCP server control: `Some(sender)` while running. Sending `()` shuts it down.
     pub mcp_shutdown:    Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+    /// Ring buffer of recent MCP tool calls (newest-last). Std mutex: pushed from a
+    /// sync sink inside the axum handler, so it can't await.
+    pub mcp_activity:    Arc<std::sync::Mutex<std::collections::VecDeque<crate::domain::mcp::McpActivityEntry>>>,
 }

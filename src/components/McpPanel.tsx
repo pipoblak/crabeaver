@@ -4,7 +4,7 @@ import { useMcp } from '@/hooks/useMcp'
 import { useConnections } from '@/context/ConnectionContext'
 
 export default function McpPanel({ width = 224 }: { width?: number }) {
-  const { status, token, clients, flags, start, stop, rotate, setupClient, setConnFlags } = useMcp()
+  const { status, token, clients, flags, activity, start, stop, rotate, setupClient, setConnFlags } = useMcp()
   const { connections } = useConnections()
   const [copied, setCopied] = useState<string | null>(null)
 
@@ -75,9 +75,27 @@ export default function McpPanel({ width = 224 }: { width?: number }) {
             )
           })}
         </Section>
+
+        {/* Activity */}
+        <Section title="Activity">
+          {activity.length === 0 && <p className="px-3 py-1.5 text-[11px] text-th-dim">No tool calls yet.</p>}
+          {activity.map((a, i) => (
+            <div key={`${a.at}-${i}`} className="flex items-center gap-2 px-3 py-0.5 text-[11px]">
+              <span className="font-mono text-th-dim shrink-0 tabular-nums">{fmtTime(a.at)}</span>
+              <span className="shrink-0" style={{ color: 'var(--tab-accent)' }}>{a.tool}</span>
+              {a.connection && <span className="text-th-dim truncate">{a.connection}</span>}
+              <span className="flex-1 truncate text-right text-th-dim">{a.summary}</span>
+            </div>
+          ))}
+        </Section>
       </div>
     </aside>
   )
+}
+
+function fmtTime(ms: number): string {
+  const d = new Date(ms)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
