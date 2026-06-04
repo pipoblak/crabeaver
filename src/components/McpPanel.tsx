@@ -4,7 +4,7 @@ import { useMcp } from '@/hooks/useMcp'
 import { useConnections } from '@/context/ConnectionContext'
 
 export default function McpPanel({ width = 224 }: { width?: number }) {
-  const { status, token, clients, flags, activity, start, stop, rotate, setupClient, setConnFlags } = useMcp()
+  const { status, token, clients, flags, activity, refresh, start, stop, rotate, setupClient, setConnFlags } = useMcp()
   const { connections } = useConnections()
   const [copied, setCopied] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -84,7 +84,9 @@ export default function McpPanel({ width = 224 }: { width?: number }) {
         </Section>
 
         {/* Activity */}
-        <Section title="Activity">
+        <Section title="Activity" action={
+          <button title="Refresh" onClick={() => refresh()} className="text-th-dim hover:text-th-accent"><RefreshCw size={11} /></button>
+        }>
           {activity.length === 0 && <p className="px-3 py-1.5 text-[11px] text-th-dim">No tool calls yet.</p>}
           {activity.map((a, i) => (
             <div key={`${a.at}-${i}`} className="flex items-center gap-2 px-3 py-0.5 text-[11px]">
@@ -105,10 +107,13 @@ function fmtTime(ms: number): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div style={{ borderBottom: '1px solid var(--border)' }}>
-      <div className="px-3 py-1.5 text-[10px] font-semibold tracking-widest uppercase text-th-dim">{title}</div>
+      <div className="px-3 py-1.5 flex items-center justify-between">
+        <span className="text-[10px] font-semibold tracking-widest uppercase text-th-dim">{title}</span>
+        {action}
+      </div>
       {children}
     </div>
   )
