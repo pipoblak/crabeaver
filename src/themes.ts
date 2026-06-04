@@ -1,3 +1,5 @@
+import { bundledThemes } from '@/themes.bundled'
+
 export interface TokenRule {
   token: string
   foreground?: string
@@ -163,7 +165,12 @@ export const themes: Theme[] = [
       ['type', 'f38ba8'],
     ]),
   },
+  // Themes shipped with the app (originally user-installed). Treated as builtins.
+  ...bundledThemes,
 ]
+
+// Theme applied on first launch / when no theme is saved.
+export const defaultTheme: Theme = themes.find(t => t.name === 'Warped Warp Dark') ?? themes[0]
 
 export function applyTheme(theme: Theme) {
   const root = document.documentElement

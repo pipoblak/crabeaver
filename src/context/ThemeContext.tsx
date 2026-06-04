@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { themes as builtinThemes, applyTheme, type Theme } from '@/themes'
+import { themes as builtinThemes, defaultTheme, applyTheme, type Theme } from '@/themes'
 
 const BUILTIN_NAMES = new Set(builtinThemes.map(t => t.name))
 
@@ -18,7 +18,7 @@ const ThemeContext = createContext<ThemeContextValue>(null!)
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [installedThemes, setInstalledThemes] = useState<Theme[]>([])
-  const [theme, setThemeState] = useState<Theme>(builtinThemes[0])
+  const [theme, setThemeState] = useState<Theme>(defaultTheme)
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
@@ -27,9 +27,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       let activeName: string | null = null
       try { savedThemes = await invoke<Theme[]>('get_themes') } catch { /* ok */ }
       try { activeName = await invoke<string | null>('get_setting', { key: 'active_theme' }) } catch { /* ok */ }
-      setInstalledThemes(savedThemes)
-      const all = [...builtinThemes, ...savedThemes]
-      const active = all.find(t => t.name === activeName) ?? builtinThemes[0]
+      // Drop any installed themes that are now bundled as builtins (avoids dupes
+      // for users who had them installed before they shipped by default).
+      const installed = savedThemes.filter(t => !BUILTIN_NAMES.has(t.name))
+      setInstalledThemes(installed)
+      const all = [...builtinThemes, ...installed]
+      const active = all.find(t => t.name === activeName) ?? defaultTheme
       applyTheme(active)
       setThemeState(active)
       setReady(true)
@@ -57,7 +60,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     if (BUILTIN_NAMES.has(name)) return
     setInstalledThemes(prev => prev.filter(t => t.name !== name))
     invoke('delete_theme', { name }).catch(console.error)
-    if (theme.name === name) setTheme(builtinThemes[0])
+    if (theme.name === name) setTheme(defaultTheme)
   }
 
   const isBuiltin = (name: string) => BUILTIN_NAMES.has(name)
