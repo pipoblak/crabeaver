@@ -15,11 +15,36 @@ fn url(port: u16) -> String {
     format!("http://127.0.0.1:{port}/mcp")
 }
 
+async fn status_of(state: &AppState, running: bool) -> McpStatus {
+    let port = app::port(state).await;
+    McpStatus {
+        running,
+        port,
+        url: url(port),
+        has_token: app::token(state).await.is_some(),
+        autostart: app::autostart(state).await,
+    }
+}
+
 #[tauri::command]
 pub async fn mcp_status(state: State<'_, AppState>) -> Result<McpStatus, String> {
     let running = state.mcp_shutdown.lock().await.is_some();
-    let port = app::port(&state).await;
-    Ok(McpStatus { running, port, url: url(port), has_token: app::token(&state).await.is_some() })
+    Ok(status_of(state.inner(), running).await)
+}
+
+/// Auto-start the server on launch when the opt-in setting is enabled.
+pub async fn start_if_autostart(app_handle: AppHandle, state: &AppState) {
+    if app::autostart(state).await && state.mcp_shutdown.lock().await.is_none() {
+        if let Err(e) = spawn(&app_handle, state).await {
+            tracing::warn!("MCP autostart failed: {e}");
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn mcp_set_autostart(state: State<'_, AppState>, on: bool) -> Result<(), String> {
+    app::set_autostart(&state, on).await;
+    Ok(())
 }
 
 /// Build the activity sink + spawn the server with the CURRENT token, storing the
@@ -54,8 +79,8 @@ pub async fn mcp_start(app_handle: AppHandle, state: State<'_, AppState>) -> Res
     if state.mcp_shutdown.lock().await.is_some() {
         return Err("already running".into());
     }
-    let bound = spawn(&app_handle, state.inner()).await?;
-    Ok(McpStatus { running: true, port: bound, url: url(bound), has_token: true })
+    spawn(&app_handle, state.inner()).await?;
+    Ok(status_of(state.inner(), true).await)
 }
 
 #[tauri::command]
@@ -69,8 +94,7 @@ pub async fn mcp_stop(state: State<'_, AppState>) -> Result<McpStatus, String> {
     if let Some(tx) = state.mcp_shutdown.lock().await.take() {
         let _ = tx.send(());
     }
-    let port = app::port(&state).await;
-    Ok(McpStatus { running: false, port, url: url(port), has_token: app::token(&state).await.is_some() })
+    Ok(status_of(state.inner(), false).await)
 }
 
 #[tauri::command]

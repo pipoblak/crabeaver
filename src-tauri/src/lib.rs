@@ -16,7 +16,7 @@ use commands::connections::{
 use commands::marketplace::{install_theme, search_marketplace};
 use commands::mcp::{
     mcp_connection_flags, mcp_get_token, mcp_list_clients, mcp_recent_activity, mcp_rotate_token,
-    mcp_set_connection_flags, mcp_set_port, mcp_setup_client, mcp_start, mcp_status, mcp_stop,
+    mcp_set_autostart, mcp_set_connection_flags, mcp_set_port, mcp_setup_client, mcp_start, mcp_status, mcp_stop,
 };
 use commands::queries::{
     create_query, create_workspace, delete_query_file, delete_workspace, get_queries_dir,
@@ -107,6 +107,13 @@ pub fn run() {
                 mcp_shutdown:    std::sync::Arc::new(tokio::sync::Mutex::new(None)),
                 mcp_activity:    std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())),
             });
+
+            // Auto-start the MCP server when the user opted in (off by default).
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let st = handle.state::<AppState>();
+                commands::mcp::start_if_autostart(handle.clone(), &st).await;
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -138,7 +145,7 @@ pub fn run() {
             // MCP server
             mcp_status, mcp_start, mcp_stop, mcp_rotate_token, mcp_get_token, mcp_set_port,
             mcp_set_connection_flags, mcp_connection_flags, mcp_list_clients, mcp_setup_client,
-            mcp_recent_activity,
+            mcp_recent_activity, mcp_set_autostart,
         ])
         .run(tauri::generate_context!())
         .expect("error running tauri app");

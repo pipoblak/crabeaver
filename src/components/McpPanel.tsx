@@ -4,7 +4,7 @@ import { useMcp } from '@/hooks/useMcp'
 import { useConnections } from '@/context/ConnectionContext'
 
 export default function McpPanel({ width = 224 }: { width?: number }) {
-  const { status, token, clients, flags, activity, refresh, start, stop, rotate, setupClient, setConnFlags } = useMcp()
+  const { status, token, clients, flags, activity, refresh, start, stop, rotate, setAutostart, setupClient, setConnFlags } = useMcp()
   const { connections } = useConnections()
   const [copied, setCopied] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -42,6 +42,10 @@ export default function McpPanel({ width = 224 }: { width?: number }) {
             <Row label={`token  ${token.slice(0, 12)}…`} onCopy={() => copy('tok', token)} copied={copied === 'tok'}
               extra={<button title="Rotate token" onClick={() => rotate()} className="text-th-dim hover:text-th-accent shrink-0"><RefreshCw size={11} /></button>} />
           )}
+          <label className="flex items-center gap-1.5 mt-1 text-[11px] text-th-dim cursor-pointer">
+            <input type="checkbox" checked={!!status?.autostart} onChange={e => setAutostart(e.target.checked)} />
+            Start on launch
+          </label>
         </div>
 
         {err && <div className="px-3 py-1 text-[10px]" style={{ color: 'var(--error-text, #f87171)' }}>{err}</div>}

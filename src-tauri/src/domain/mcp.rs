@@ -21,6 +21,8 @@ pub struct McpStatus {
     pub port: u16,
     pub url: String,
     pub has_token: bool,
+    /// Whether the server auto-starts on app launch (opt-in, persisted).
+    pub autostart: bool,
 }
 
 /// One entry in the live activity log (ring buffer).

@@ -5,10 +5,15 @@ use rand::Rng;
 
 use crate::domain::mcp::{McpConnFlags, SqlKind};
 use crate::infrastructure::database::AppState;
+use crate::infrastructure::keychain;
 
 const KEY_PORT: &str = "mcp_port";
-const KEY_TOKEN: &str = "mcp_token";
+const KEY_TOKEN: &str = "mcp_token"; // legacy settings key — migrated to the keychain
 const KEY_FLAGS: &str = "mcp_conn_flags";
+const KEY_AUTOSTART: &str = "mcp_autostart";
+/// Keychain account holding the MCP bearer token (a local-loopback capability
+/// token, kept beside DB passwords; never in the settings DB).
+const TOKEN_ID: &str = "mcp-server-token";
 pub const DEFAULT_PORT: u16 = 7300;
 
 async fn get(state: &AppState, key: &str) -> Option<String> {
@@ -51,23 +56,45 @@ pub async fn set_port(state: &AppState, p: u16) {
     set(state, KEY_PORT, &p.to_string()).await
 }
 
-/// Return the existing token, creating + persisting one on first use.
+pub async fn autostart(state: &AppState) -> bool {
+    get(state, KEY_AUTOSTART).await.as_deref() == Some("true")
+}
+
+pub async fn set_autostart(state: &AppState, on: bool) {
+    set(state, KEY_AUTOSTART, if on { "true" } else { "false" }).await
+}
+
+/// Return the existing token (from the keychain), creating + storing one on first
+/// use. Migrates a token previously kept in the settings DB so existing client
+/// configs keep working.
 pub async fn ensure_token(state: &AppState) -> String {
-    if let Some(t) = get(state, KEY_TOKEN).await {
+    if let Ok(t) = keychain::load_password(TOKEN_ID) {
         return t;
     }
+    // One-time migration: move a legacy settings-stored token into the keychain.
+    if let Some(legacy) = get(state, KEY_TOKEN).await {
+        let _ = keychain::store_password(TOKEN_ID, &legacy);
+        let _ = sqlx::query("DELETE FROM settings WHERE key = ?").bind(KEY_TOKEN).execute(&state.db).await;
+        return legacy;
+    }
     let t = generate_token();
-    set(state, KEY_TOKEN, &t).await;
+    let _ = keychain::store_password(TOKEN_ID, &t);
     t
 }
 
 pub async fn token(state: &AppState) -> Option<String> {
+    if let Ok(t) = keychain::load_password(TOKEN_ID) {
+        return Some(t);
+    }
+    // Surface a not-yet-migrated legacy token for display without changing it.
     get(state, KEY_TOKEN).await
 }
 
+/// Regenerate the token (only on explicit user action) and store it in the keychain.
 pub async fn rotate_token(state: &AppState) -> String {
     let t = generate_token();
-    set(state, KEY_TOKEN, &t).await;
+    let _ = keychain::store_password(TOKEN_ID, &t);
+    let _ = sqlx::query("DELETE FROM settings WHERE key = ?").bind(KEY_TOKEN).execute(&state.db).await;
     t
 }
 
