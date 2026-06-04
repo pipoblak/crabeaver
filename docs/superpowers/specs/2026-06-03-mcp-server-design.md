@@ -27,6 +27,8 @@ into SQL except `run_query`, which passes through the gate.
 - One-click setup into common MCP clients; copy fallback for the rest.
 - Read + write, with writes opt-in per connection and strong injection safety.
 - A sidebar panel to control everything and observe live activity.
+- User-authored context so the agent understands what the server and each
+  connection are: a global server prompt + a per-connection note.
 
 ## Non-Goals
 
@@ -46,6 +48,7 @@ into SQL except `run_query`, which passes through the gate.
 | Connection exposure | **Opt-in per connection** (two toggles: expose, allow-write) |
 | Boot default | Server **off** until user turns it on |
 | Setup | One-click "Set up" per detected client + universal copy fallback |
+| Context | **Global server prompt** (`initialize.instructions`) + **per-connection note** (in `list_connections`) |
 
 ## Architecture
 
@@ -66,8 +69,8 @@ application/mcp.rs   tool implementations + SAFETY GATE
         │ reuses        (exposed? is-write? write-allowed?) then delegates
 application/{query, introspection, connections}   EXISTING use cases (reused)
 domain/
-  mcp.rs         pure types: McpServerConfig, McpConnFlags, McpActivityEntry.
-                 No HTTP, no sqlx.
+  mcp.rs         pure types: McpServerConfig (incl. global_prompt), McpConnFlags
+                 (expose, allow_write, note), McpActivityEntry. No HTTP, no sqlx.
 commands/mcp.rs  thin Tauri glue for the sidebar to drive the server
 ```
 
@@ -90,7 +93,7 @@ invisible to it).
 
 | Tool | Does | Reuses |
 |---|---|---|
-| `list_connections` | lists only exposed connections (id, name, engine, database, `write_allowed`) | connections use case |
+| `list_connections` | lists only exposed connections (id, name, engine, database, `write_allowed`, `context`) | connections use case |
 | `list_databases` | databases on a connection | `list_databases` |
 | `list_schemas` | schemas | `get_schemas` |
 | `describe_table` | columns, types, indexes, foreign keys for a table | `get_table_details` |
@@ -124,6 +127,33 @@ with reusing parameterized introspection use cases, the only raw-SQL surface is
 
 If `sqlparser` cannot parse a statement for a given dialect, treat it as a **write**
 (fail closed) so unknown/unsupported syntax never slips through as read-only.
+
+## Context / Instructions
+
+User-authored context so the agent understands what it is looking at. Two levels,
+both editable from **the sidebar panel and the general Settings**:
+
+- **Global server prompt** — free text. Sent verbatim as the MCP
+  `initialize.instructions` field, so every client reads it before any tool call.
+  Use it for cross-cutting context: what these databases are, schema conventions,
+  house rules ("prefer read; confirm before destructive writes").
+- **Per-connection note** — short free text per connection. Included as a
+  `context` field on that connection's entry in `list_connections` (and surfaced
+  in `describe_table` output for that connection). Use it for per-database
+  specifics ("billing prod — do not mutate without confirming", "sandbox — safe to
+  reset").
+
+Both are optional. Empty global prompt → `instructions` omitted; empty note →
+`context` omitted. Neither ever contains a password; they are user prose stored
+with settings (global) and connection settings (per-connection).
+
+The global prompt and per-connection notes are edited in two places that share the
+same underlying values:
+
+- **Sidebar MCP panel** — inline editors (global prompt at top; note beside each
+  exposed connection's toggles).
+- **Settings → MCP section** — a dedicated section to edit the global prompt and
+  every connection's note in one form, plus server defaults (port).
 
 ## Endpoint Security
 
@@ -183,6 +213,9 @@ New icon in `ActivityBar` (server icon) opens an MCP panel in the sidebar
   http://127.0.0.1:7300/mcp        [copy]
   token  cbv_8f3a…            [copy] [rotate]
 
+Server prompt                       [edit]
+  "DBs da empresa X. Prefira read…"
+
 Setup
   ✓ Claude Code              [installed]
     Cursor                   [Set up] [copy]
@@ -190,8 +223,8 @@ Setup
     …detected clients…
 
 Connections
-  [x] expose  [ ] write   local-dev
-  [ ] expose  [ ] write   pg-prod
+  [x] expose  [ ] write   local-dev   note: "sandbox"   [edit]
+  [ ] expose  [ ] write   pg-prod     note: "billing"   [edit]
 
 Activity (live)
   12:04  run_query   local-dev   84 rows
@@ -199,32 +232,48 @@ Activity (live)
 ```
 
 - Server on/off; port configurable; token copy/rotate; URL copy.
-- Per-connection `expose` / `allow_write` toggles, persisted with connection
-  settings.
+- **Global server prompt** inline editor at the top.
+- Per-connection `expose` / `allow_write` toggles **and a context note**, persisted
+  with connection settings.
 - Setup list: detected clients with Set up / Installed / copy.
 - Live activity log: a ring buffer of the last N tool calls, pushed to the frontend
   via a Tauri event, shown newest-first.
+
+### Settings → MCP section
+
+A dedicated section in the general Settings (`src/components/settings/`), peer to
+the existing Connections/Themes sections, editing the **same** values as the
+sidebar:
+
+- Global server prompt (larger editor).
+- Per-connection notes (all connections in one list).
+- Server default port.
+
+Both surfaces read/write through the same commands, so an edit in one reflects in
+the other.
 
 ## Commands (Tauri glue — thin)
 
 `commands/mcp.rs`, each ~1–3 lines delegating to `application`:
 
-- `mcp_status` → `{ running, port, url, token, has_token }`
+- `mcp_status` → `{ running, port, url, token, has_token, global_prompt }`
 - `mcp_start` / `mcp_stop`
 - `mcp_rotate_token`
 - `mcp_set_port`
 - `mcp_set_connection_flags(connection_id, expose, allow_write)`
+- `mcp_set_global_prompt(text)` / read via `mcp_status`
+- `mcp_set_connection_note(connection_id, note)`
 - `mcp_list_clients` → detected client targets + install state
 - `mcp_setup_client(client_id)` → run install
 - `mcp_recent_activity` → recent log entries (also streamed via event)
 
 ## Persistence
 
-- MCP settings (port, token, last-set flags) stored with the existing settings
-  store; **`running` is not persisted** (off at boot).
-- Per-connection `mcp_expose` / `mcp_allow_write` stored with connection settings
-  (SQLite), following the existing connection-settings pattern. Passwords remain
-  untouched and are never exposed to MCP.
+- MCP settings (port, token, **global server prompt**, last-set flags) stored with
+  the existing settings store; **`running` is not persisted** (off at boot).
+- Per-connection `mcp_expose` / `mcp_allow_write` / **`mcp_note`** stored with
+  connection settings (SQLite), following the existing connection-settings pattern.
+  Passwords remain untouched and are never exposed to MCP.
 
 ## Error Handling
 
