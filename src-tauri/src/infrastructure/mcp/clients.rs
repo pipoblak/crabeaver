@@ -106,14 +106,23 @@ pub fn list() -> Vec<ClientTarget> {
 /// Install the crabeaver entry into one client.
 pub fn install(id: &str, url: &str, token: &str) -> Result<(), String> {
     if id == "claude-code" {
-        let status = std::process::Command::new("claude")
+        let out = std::process::Command::new("claude")
             .args(claude_code_args(url, token))
-            .status()
+            .output()
             .map_err(|e| format!("claude CLI failed: {e}"))?;
-        return if status.success() {
+        if out.status.success() {
+            return Ok(());
+        }
+        // Re-running "Set up" is idempotent: an existing entry is success, not an error.
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stderr),
+            String::from_utf8_lossy(&out.stdout)
+        );
+        return if msg.contains("already exists") {
             Ok(())
         } else {
-            Err("claude mcp add failed".into())
+            Err(msg.trim().to_string())
         };
     }
     let path = json_clients()

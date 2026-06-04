@@ -7,6 +7,11 @@ export default function McpPanel({ width = 224 }: { width?: number }) {
   const { status, token, clients, flags, activity, start, stop, rotate, setupClient, setConnFlags } = useMcp()
   const { connections } = useConnections()
   const [copied, setCopied] = useState<string | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+
+  const doSetup = (id: string) => {
+    setupClient(id).catch(e => { setErr(String(e).replace(/^.*Error: /, '')); setTimeout(() => setErr(null), 4000) })
+  }
 
   const copy = (key: string, text: string) => {
     navigator.clipboard.writeText(text)
@@ -39,6 +44,8 @@ export default function McpPanel({ width = 224 }: { width?: number }) {
           )}
         </div>
 
+        {err && <div className="px-3 py-1 text-[10px]" style={{ color: 'var(--error-text, #f87171)' }}>{err}</div>}
+
         {/* Setup */}
         <Section title="Setup">
           {clients.map(c => (
@@ -47,7 +54,7 @@ export default function McpPanel({ width = 224 }: { width?: number }) {
               {c.installed
                 ? <span className="text-[10px] text-th-dim">installed</span>
                 : c.can_setup
-                ? <button onClick={() => setupClient(c.id)} className="text-[11px] text-th-accent hover:underline">Set up</button>
+                ? <button onClick={() => doSetup(c.id)} className="text-[11px] text-th-accent hover:underline">Set up</button>
                 : <span className="text-[10px] text-th-dim">copy only</span>}
             </div>
           ))}
