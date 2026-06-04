@@ -52,7 +52,10 @@ export default function McpPanel({ width = 224 }: { width?: number }) {
             <div key={c.id} className="flex items-center gap-2 px-3 py-1 text-[12px]">
               <span className="flex-1 truncate" style={{ color: c.detected ? 'var(--text)' : 'var(--text-dim)' }}>{c.name}</span>
               {c.installed
-                ? <span className="text-[10px] text-th-dim">installed</span>
+                ? <>
+                    <span className="text-[10px] text-th-dim">installed</span>
+                    <button onClick={() => doSetup(c.id)} title="Reinstall (re-apply current token)" className="text-[11px] text-th-accent hover:underline">Reinstall</button>
+                  </>
                 : c.can_setup
                 ? <button onClick={() => doSetup(c.id)} className="text-[11px] text-th-accent hover:underline">Set up</button>
                 : <span className="text-[10px] text-th-dim">copy only</span>}

@@ -22,19 +22,18 @@ pub async fn mcp_status(state: State<'_, AppState>) -> Result<McpStatus, String>
     Ok(McpStatus { running, port, url: url(port), has_token: app::token(&state).await.is_some() })
 }
 
-#[tauri::command]
-pub async fn mcp_start(app_handle: AppHandle, state: State<'_, AppState>) -> Result<McpStatus, String> {
-    if state.mcp_shutdown.lock().await.is_some() {
-        return Err("already running".into());
-    }
-    let token = app::ensure_token(&state).await;
-    let port = app::port(&state).await;
+/// Build the activity sink + spawn the server with the CURRENT token, storing the
+/// shutdown handle. Shared by start and token-rotate restart so the running server
+/// always serves the live token.
+async fn spawn(app_handle: &AppHandle, state: &AppState) -> Result<u16, String> {
+    let token = app::ensure_token(state).await;
+    let port = app::port(state).await;
     // Cheap clone: AppState's fields are pools/Arc-shared, so the server task sees
     // the same connections and settings DB as the app.
-    let shared: Arc<AppState> = Arc::new(state.inner().clone());
+    let shared: Arc<AppState> = Arc::new(state.clone());
 
-    // Activity sink: push to the ring buffer + broadcast a `mcp-activity` event.
     let buf = state.mcp_activity.clone();
+    let app_for_sink = app_handle.clone();
     let sink: ActivitySink = Arc::new(move |entry: McpActivityEntry| {
         if let Ok(mut b) = buf.lock() {
             b.push_back(entry.clone());
@@ -42,11 +41,20 @@ pub async fn mcp_start(app_handle: AppHandle, state: State<'_, AppState>) -> Res
                 b.pop_front();
             }
         }
-        let _ = app_handle.emit("mcp-activity", entry);
+        let _ = app_for_sink.emit("mcp-activity", entry);
     });
 
     let (bound, tx) = server::start(shared, port, token, sink).await?;
     *state.mcp_shutdown.lock().await = Some(tx);
+    Ok(bound)
+}
+
+#[tauri::command]
+pub async fn mcp_start(app_handle: AppHandle, state: State<'_, AppState>) -> Result<McpStatus, String> {
+    if state.mcp_shutdown.lock().await.is_some() {
+        return Err("already running".into());
+    }
+    let bound = spawn(&app_handle, state.inner()).await?;
     Ok(McpStatus { running: true, port: bound, url: url(bound), has_token: true })
 }
 
@@ -66,8 +74,16 @@ pub async fn mcp_stop(state: State<'_, AppState>) -> Result<McpStatus, String> {
 }
 
 #[tauri::command]
-pub async fn mcp_rotate_token(state: State<'_, AppState>) -> Result<String, String> {
-    Ok(app::rotate_token(&state).await)
+pub async fn mcp_rotate_token(app_handle: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+    let token = app::rotate_token(&state).await;
+    // The running server captured the old token at start — restart so it serves the
+    // new one. Otherwise every client (incl. already-configured ones) gets 401.
+    let was_running = { state.mcp_shutdown.lock().await.take() };
+    if let Some(tx) = was_running {
+        let _ = tx.send(());
+        spawn(&app_handle, state.inner()).await?;
+    }
+    Ok(token)
 }
 
 #[tauri::command]
