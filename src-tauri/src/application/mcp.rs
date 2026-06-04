@@ -114,10 +114,16 @@ pub async fn set_flags(state: &AppState, id: &str, f: McpConnFlags) {
 }
 
 /// Classify SQL as Read or Write by AST (not regex). Read = every statement is a
-/// SELECT/WITH…SELECT or EXPLAIN/SHOW. Anything else — or an unparseable/empty
-/// string — is Write (fail closed).
+/// pure read. Anything else — or an unparseable/empty string — is Write (fail
+/// closed).
+///
+/// "Pure read" is checked recursively, not just by top-level statement type,
+/// because a query can carry a write inside it: data-modifying CTEs
+/// (`WITH w AS (UPDATE … RETURNING) SELECT …`), `SELECT … INTO new_table`, and
+/// `EXPLAIN ANALYZE <write>` (which executes the inner statement). This is the
+/// up-front gate; `execute_readonly` is the engine-level backstop for anything
+/// this still misjudges.
 pub fn classify(sql: &str) -> SqlKind {
-    use sqlparser::ast::Statement;
     use sqlparser::dialect::GenericDialect;
     use sqlparser::parser::Parser;
 
@@ -125,19 +131,54 @@ pub fn classify(sql: &str) -> SqlKind {
         Ok(s) if !s.is_empty() => s,
         _ => return SqlKind::Write,
     };
-    let all_read = stmts.iter().all(|s| {
-        matches!(
-            s,
-            Statement::Query(_)
-                | Statement::Explain { .. }
-                | Statement::ExplainTable { .. }
-                | Statement::ShowVariable { .. }
-                | Statement::ShowVariables { .. }
-                | Statement::ShowTables { .. }
-                | Statement::ShowColumns { .. }
-        )
-    });
-    if all_read { SqlKind::Read } else { SqlKind::Write }
+    if stmts.iter().all(stmt_is_read) {
+        SqlKind::Read
+    } else {
+        SqlKind::Write
+    }
+}
+
+/// A statement that only reads — no row, schema, or catalog mutation.
+fn stmt_is_read(s: &sqlparser::ast::Statement) -> bool {
+    use sqlparser::ast::Statement;
+    match s {
+        Statement::Query(q) => !query_is_write(q),
+        // EXPLAIN ANALYZE actually runs the inner statement; plain EXPLAIN does
+        // not, but we still require the inner to be a read (conservative).
+        Statement::Explain { statement, analyze, .. } => !analyze && stmt_is_read(statement),
+        Statement::ExplainTable { .. }
+        | Statement::ShowVariable { .. }
+        | Statement::ShowVariables { .. }
+        | Statement::ShowTables { .. }
+        | Statement::ShowColumns { .. } => true,
+        _ => false,
+    }
+}
+
+/// Does this query mutate anything, anywhere within it (CTEs, set operations,
+/// `SELECT … INTO`)?
+fn query_is_write(q: &sqlparser::ast::Query) -> bool {
+    if let Some(with) = &q.with
+        && with.cte_tables.iter().any(|c| query_is_write(&c.query))
+    {
+        return true;
+    }
+    set_expr_is_write(&q.body)
+}
+
+fn set_expr_is_write(e: &sqlparser::ast::SetExpr) -> bool {
+    use sqlparser::ast::SetExpr;
+    match e {
+        // A write embedded in a query body (e.g. inside a CTE).
+        SetExpr::Insert(_) | SetExpr::Update(_) => true,
+        // SELECT … INTO new_table creates and writes a table.
+        SetExpr::Select(s) => s.into.is_some(),
+        SetExpr::Query(inner) => query_is_write(inner),
+        SetExpr::SetOperation { left, right, .. } => {
+            set_expr_is_write(left) || set_expr_is_write(right)
+        }
+        SetExpr::Values(_) | SetExpr::Table(_) => false,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -275,13 +316,25 @@ pub async fn tool_run_query(
     limit: Option<u32>,
 ) -> Result<RunResult, String> {
     let kind = classify(sql);
-    authorize(&flags(state).await, connection_id, kind).map_err(|e| e.message().to_string())?;
+    let conn_flags = flags(state).await;
+    authorize(&conn_flags, connection_id, kind).map_err(|e| e.message().to_string())?;
+    let allow_write = conn_flags.get(connection_id).map(|f| f.allow_write).unwrap_or(false);
 
     let effective = match kind {
         SqlKind::Read => with_limit(sql, limit.unwrap_or(DEFAULT_QUERY_LIMIT).min(MAX_QUERY_LIMIT)),
         SqlKind::Write => sql.to_string(),
     };
-    let result = query::execute(state, connection_id, &effective).await.map_err(|e| e.to_string())?;
+    // Defense in depth: a connection without write permission runs EVERYTHING in
+    // an engine-enforced read-only transaction. Statement classification only
+    // decides the up-front error and the LIMIT; the read-only execution is the
+    // wall that stops anything `classify` misjudges (data-modifying CTEs,
+    // SELECT INTO, volatile write functions) from mutating data.
+    let result = if allow_write {
+        query::execute(state, connection_id, &effective).await
+    } else {
+        query::execute_readonly(state, connection_id, &effective).await
+    }
+    .map_err(|e| e.to_string())?;
     let row_count = result.rows.len();
     Ok(RunResult {
         columns: result.columns.iter().map(|c| c.name.clone()).collect(),
@@ -333,6 +386,42 @@ mod tests {
     #[test]
     fn mixed_multistatement_is_write() {
         assert_eq!(k("SELECT 1; DELETE FROM t"), SqlKind::Write);
+    }
+
+    #[test]
+    fn data_modifying_cte_is_write() {
+        // The bypass found in testing: a write hidden in a CTE, wrapped in SELECT.
+        assert_eq!(
+            k("WITH w AS (UPDATE users SET id = id WHERE false RETURNING 1) SELECT count(*) FROM w"),
+            SqlKind::Write
+        );
+        assert_eq!(
+            k("WITH w AS (INSERT INTO t VALUES (1) RETURNING 1) SELECT * FROM w"),
+            SqlKind::Write
+        );
+    }
+
+    #[test]
+    fn select_into_is_write() {
+        // SELECT … INTO creates/writes a table despite reading like a SELECT.
+        assert_eq!(k("SELECT id INTO new_t FROM users WHERE false"), SqlKind::Write);
+        assert_eq!(k("SELECT id INTO TEMPORARY new_t FROM users"), SqlKind::Write);
+    }
+
+    #[test]
+    fn explain_analyze_write_is_write() {
+        // EXPLAIN ANALYZE executes the inner statement.
+        assert_eq!(k("EXPLAIN ANALYZE INSERT INTO t VALUES (1)"), SqlKind::Write);
+        // Plain EXPLAIN of a read stays read.
+        assert_eq!(k("EXPLAIN SELECT 1"), SqlKind::Read);
+    }
+
+    #[test]
+    fn read_only_ctes_stay_read() {
+        assert_eq!(
+            k("WITH a AS (SELECT 1), b AS (SELECT * FROM a) SELECT * FROM b"),
+            SqlKind::Read
+        );
     }
 
     #[test]

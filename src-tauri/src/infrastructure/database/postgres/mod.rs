@@ -877,6 +877,23 @@ impl DatabaseDriver for PostgresDriver {
         result
     }
 
+    async fn execute_readonly(&self, conn: &Connection, sql: &str) -> Result<QueryResult, DriverError> {
+        let pool = self.pool(conn).await?;
+        let mut tx = pool.begin().await.map_err(conn_err)?;
+        // First statement in the transaction: make the whole transaction
+        // read-only. Postgres then rejects any write — data-modifying CTEs,
+        // SELECT INTO, EXPLAIN ANALYZE of a write, volatile write functions —
+        // with "cannot execute … in a read-only transaction".
+        sqlx::query("SET TRANSACTION READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .map_err(query_err)?;
+        let result = Self::run(&mut tx, sql).await;
+        // Reads need no commit; rolling back guarantees nothing persists.
+        let _ = tx.rollback().await;
+        result
+    }
+
     async fn cancel(&self, conn: &Connection) -> Result<(), DriverError> {
         let pid = self.active_pids.lock().await.get(&conn.id).copied();
         let Some(pid) = pid else { return Ok(()) };

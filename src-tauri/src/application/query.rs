@@ -16,6 +16,20 @@ pub async fn execute(
     driver.execute(&conn, sql).await
 }
 
+/// Execute under engine-enforced read-only semantics (see
+/// `DatabaseDriver::execute_readonly`). The MCP gate uses this for any
+/// connection without write permission so a write that slips past statement
+/// classification still cannot mutate data.
+pub async fn execute_readonly(
+    state:         &AppState,
+    connection_id: &str,
+    sql:           &str,
+) -> Result<QueryResult, DriverError> {
+    let conn = load_connection(state, connection_id).await?;
+    let driver = state.drivers.driver_for_str(&conn.driver)?;
+    driver.execute_readonly(&conn, sql).await
+}
+
 pub async fn cancel(state: &AppState, connection_id: &str) -> Result<(), DriverError> {
     let conn = load_connection(state, connection_id).await?;
     let driver = state.drivers.driver_for_str(&conn.driver)?;

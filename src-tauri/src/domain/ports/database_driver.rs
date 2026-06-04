@@ -54,6 +54,20 @@ pub trait DatabaseDriver: Send + Sync {
     /// Execute a statement and return rows or an affected-row count.
     async fn execute(&self, conn: &Connection, sql: &str) -> Result<QueryResult, DriverError>;
 
+    /// Execute `sql` under engine-enforced read-only semantics: no write can take
+    /// effect regardless of statement shape — including data-modifying CTEs
+    /// (`WITH w AS (UPDATE … RETURNING) …`), `SELECT … INTO`, `EXPLAIN ANALYZE`
+    /// of a write, and volatile write functions called from a `SELECT`. The MCP
+    /// read-only path uses this so a statement-classification miss can never
+    /// mutate data. Engines that can be MCP-exposed MUST override; the default
+    /// fails closed.
+    async fn execute_readonly(&self, conn: &Connection, sql: &str) -> Result<QueryResult, DriverError> {
+        let _ = (conn, sql);
+        Err(DriverError::Unsupported(
+            "read-only execution not supported for this engine".into(),
+        ))
+    }
+
     /// Cancel the query currently in flight for this connection, if the engine
     /// supports it. No-op (Ok) when nothing is running.
     async fn cancel(&self, conn: &Connection) -> Result<(), DriverError>;

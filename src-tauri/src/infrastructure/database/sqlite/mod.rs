@@ -529,6 +529,54 @@ impl DatabaseDriver for SqliteDriver {
         }
     }
 
+    async fn execute_readonly(&self, conn: &Connection, sql: &str) -> Result<QueryResult, DriverError> {
+        let pool = self.pool(conn).await?;
+        let sql = sql.trim();
+        let start = Instant::now();
+
+        // Pin one connection: set query_only for the duration of the query, then
+        // restore it before the connection returns to the pool so the editor's
+        // writes (which share this pool) are unaffected.
+        let mut c = pool.acquire().await.map_err(conn_err)?;
+        sqlx::query("PRAGMA query_only = ON").execute(&mut *c).await.map_err(query_err)?;
+
+        // No write-fallback here (unlike `execute`): a write fails fetch_all under
+        // query_only and we surface that error rather than retrying it as a write.
+        let outcome = match sqlx::query(sql).fetch_all(&mut *c).await {
+            Ok(rows) => {
+                let columns: Vec<ColumnInfo> = if let Some(first) = rows.first() {
+                    first
+                        .columns()
+                        .iter()
+                        .map(|col| ColumnInfo {
+                            name:      col.name().to_string(),
+                            type_name: col.type_info().name().to_string(),
+                            is_fk:     false,
+                            fk_ref:    None,
+                            fk_col:    None,
+                        })
+                        .collect()
+                } else {
+                    vec![]
+                };
+                let result_rows = rows
+                    .iter()
+                    .map(|row| (0..row.len()).map(|i| sqlite_col_to_json(row, i)).collect::<Vec<_>>())
+                    .collect();
+                Ok(QueryResult {
+                    columns,
+                    rows: result_rows,
+                    affected_rows: None,
+                    execution_ms: start.elapsed().as_millis() as u64,
+                })
+            }
+            Err(e) => Err(query_err(e)),
+        };
+
+        let _ = sqlx::query("PRAGMA query_only = OFF").execute(&mut *c).await;
+        outcome
+    }
+
     async fn cancel(&self, _conn: &Connection) -> Result<(), DriverError> {
         Err(DriverError::Unsupported("SQLite does not support query cancellation".into()))
     }
