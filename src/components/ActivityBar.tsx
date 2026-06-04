@@ -1,51 +1,51 @@
 import { Database, Search, Settings } from 'lucide-react'
-import { useState, useEffect } from 'react'
+import { useEffect } from 'react'
 import type { AppView } from '@/App'
 
-const navItems = [
-  { icon: Database,   label: 'Connections' },
-  { icon: Search,     label: 'Search' },
-]
+export type SidebarPanel = 'connections' | 'search'
 
-const SEARCH_NAV = navItems.findIndex(n => n.label === 'Search')
+const navItems: { icon: typeof Database; label: string; panel: SidebarPanel }[] = [
+  { icon: Database, label: 'Connections', panel: 'connections' },
+  { icon: Search,   label: 'Search',      panel: 'search' },
+]
 
 interface Props {
   view: AppView
   setView: (v: AppView) => void
+  panel: SidebarPanel
+  setPanel: (p: SidebarPanel) => void
 }
 
-export default function ActivityBar({ view, setView }: Props) {
-  const [activeNav, setActiveNav] = useState(0)
-
-  const handleNavClick = (i: number) => {
-    setActiveNav(i)
+export default function ActivityBar({ view, setView, panel, setPanel }: Props) {
+  const openPanel = (p: SidebarPanel) => {
+    setPanel(p)
     setView('editor')
   }
 
-  // ⌘/Ctrl + Shift + F → jump to the Search nav.
+  // ⌘/Ctrl + Shift + F → jump to the Search panel.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
         e.preventDefault()
-        setActiveNav(SEARCH_NAV)
-        setView('editor')
+        openPanel('search')
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [setView])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <div className="flex flex-col items-center w-12 shrink-0 bg-th-activity border-r border-r-th-border">
       <div className="flex flex-col items-center flex-1 pt-1">
-        {navItems.map((item, i) => {
+        {navItems.map(item => {
           const Icon = item.icon
-          const isActive = view === 'editor' && activeNav === i
+          const isActive = view === 'editor' && panel === item.panel
           return (
             <button
               key={item.label}
               title={item.label}
-              onClick={() => handleNavClick(i)}
+              onClick={() => openPanel(item.panel)}
               className={`relative flex items-center justify-center w-12 h-11 transition-colors border-l-2
                 ${isActive
                   ? 'text-th-bright border-l-th-bright'

@@ -77,7 +77,7 @@ function newResultId() { return `r${Date.now()}-${Math.random().toString(36).sli
 
 export default function EditorTabs() {
   const { tabs, activeId, setActiveId, openQueryTab, openSpecialTab, closeTab, updateContent, renameTab,
-          setTabConnection, setTabDatabase, setTabQueryLimit } = useTabs()
+          setTabConnection, setTabDatabase, setTabQueryLimit, revealTarget } = useTabs()
   const { startTask, endTask } = useTaskActions()
   const trackedQuery = useTrackedQuery()
   // Latest tabs for stable callbacks that only need to read (not subscribe).
@@ -944,6 +944,8 @@ export default function EditorTabs() {
                 driver={connections.find(c => c.id === active.connectionId)?.driver}
                 scrollKey={active.filePath}
                 database={active.database}
+                revealLine={revealTarget && revealTarget.path === active.filePath ? revealTarget.line : undefined}
+                revealNonce={revealTarget && revealTarget.path === active.filePath ? revealTarget.nonce : undefined}
                 onSchemaStatus={setSchemaStatus}
                 onRunQuery={(_sql, newTab) => runQuery(newTab)}
                 onOpenObject={target => {

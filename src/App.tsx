@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import ActivityBar from '@/components/ActivityBar'
+import ActivityBar, { type SidebarPanel } from '@/components/ActivityBar'
 import Sidebar from '@/components/Sidebar'
+import SearchPanel from '@/components/SearchPanel'
 import EditorTabs from '@/components/EditorTabs'
 import SettingsTab from '@/components/SettingsTab'
 import StatusBar from '@/components/StatusBar'
@@ -22,6 +23,7 @@ if (import.meta.env.DEV) {
 
 function AppShell() {
   const [view, setView]                   = useState<AppView>('editor')
+  const [sidebarPanel, setSidebarPanel]   = useState<SidebarPanel>('connections')
   const [settingsSection, setSettingsSection] = useState<string | undefined>()
   const { restored, openSpecialTab } = useTabs()
   const [sidebarW, setSidebarW] = useState(224)
@@ -39,10 +41,12 @@ function AppShell() {
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-th-bg text-th-text">
       <div className="flex flex-1 min-h-0">
-        <ActivityBar view={view} setView={setView} />
+        <ActivityBar view={view} setView={setView} panel={sidebarPanel} setPanel={setSidebarPanel} />
         {view === 'editor' && (
           <>
-            <Sidebar openSettings={openSettings} openTab={(type, title, extra) => { openSpecialTab(type as Tab['type'], title, extra) }} width={sidebarW} />
+            {sidebarPanel === 'search'
+              ? <SearchPanel width={sidebarW} />
+              : <Sidebar openSettings={openSettings} openTab={(type, title, extra) => { openSpecialTab(type as Tab['type'], title, extra) }} width={sidebarW} />}
             <ResizeHandle onMouseDown={sidebarDrag} />
           </>
         )}

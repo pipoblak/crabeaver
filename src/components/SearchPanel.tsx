@@ -86,7 +86,7 @@ export default function SearchPanel({ width = 224 }: Props) {
             onChange={e => setQuery(e.target.value)}
             placeholder="Search in all workspaces…"
             spellCheck={false}
-            className="flex-1 bg-transparent outline-none text-[12px] py-1.5"
+            className="flex-1 min-w-0 bg-transparent outline-none text-[12px] py-1.5"
             style={{ color: 'var(--text)' }}
           />
           {loading

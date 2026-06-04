@@ -22,8 +22,12 @@ interface TabsContextValue {
   openQueryTab: () => Promise<void>
   /** Create a query in a specific workspace and open it. */
   createQuery: (workspace: string, title?: string) => Promise<void>
-  /** Open an existing query by path — focuses it if already open. */
-  openQueryByPath: (path: string) => Promise<void>
+  /** Open an existing query by path — focuses it if already open. Optionally
+   *  reveal a 1-based line (used by search results). */
+  openQueryByPath: (path: string, line?: number) => Promise<void>
+  /** Editor reveal request: focus this 1-based line in the tab backing `path`.
+   *  `nonce` bumps each request so a repeat to the same line still fires. */
+  revealTarget: { path: string; line: number; nonce: number } | null
   /** Close the tab backing a query path, if open (does NOT delete the file). */
   closeQueryByPath: (path: string) => void
   /** Close all open tabs belonging to a workspace (used when it's deleted). */
@@ -44,6 +48,11 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
   const [tabs, setTabs] = useState<Tab[]>([])
   const [activeId, setActiveIdState] = useState(0)
   const [restored, setRestored] = useState(false)
+  const [revealTarget, setRevealTarget] = useState<{ path: string; line: number; nonce: number } | null>(null)
+  const revealNonce = useRef(0)
+  const requestReveal = useCallback((path: string, line: number) => {
+    setRevealTarget({ path, line, nonce: ++revealNonce.current })
+  }, [])
   const saveTimers = useRef(new Map<number, ReturnType<typeof setTimeout>>())
   const tabsRef = useRef<Tab[]>([])
   const nextIdRef = useRef(1)
@@ -150,9 +159,13 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   // ── Open an existing query (focus if already open) ────────────────────────
-  const openQueryByPath = useCallback(async (path: string) => {
+  const openQueryByPath = useCallback(async (path: string, line?: number) => {
     const open = tabsRef.current.find(t => t.filePath === path)
-    if (open) { setActiveId(open.id); return }
+    if (open) {
+      setActiveId(open.id)
+      if (line) requestReveal(path, line)
+      return
+    }
     const content = await invoke<string>('read_query_file', { path }).catch(() => null)
     if (content === null) return // stale entry
     const id = nextIdRef.current++
@@ -163,7 +176,8 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
     })
     setActiveIdState(id)
     persistActivePath(path)
-  }, [setActiveId])
+    if (line) requestReveal(path, line)
+  }, [setActiveId, requestReveal])
 
   // ── Create a query in a workspace and open it ─────────────────────────────
   const createQuery = useCallback(async (workspace: string, title?: string) => {
@@ -306,7 +320,7 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <TabsContext.Provider value={{
-      tabs, activeId, restored,
+      tabs, activeId, restored, revealTarget,
       setActiveId, openQueryTab, createQuery, openQueryByPath, closeQueryByPath, closeWorkspaceTabs,
       openSpecialTab, closeTab, updateContent, renameTab, reloadTabs: loadTabs,
       setTabConnection, setTabDatabase, setTabQueryLimit,

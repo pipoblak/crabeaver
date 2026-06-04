@@ -109,6 +109,10 @@ interface Props {
   onRunQuery?: (sql: string, newTab: boolean) => void
   /** Cmd/Ctrl+click on a known schema/table identifier opens its details tab. */
   onOpenObject?: (target: ResolveTarget) => void
+  /** 1-based line to reveal + focus (e.g. from a search result). */
+  revealLine?: number
+  /** Bumped per reveal request so repeats to the same line still fire. */
+  revealNonce?: number
 }
 
 function isDark(hex: string): boolean {
@@ -136,7 +140,7 @@ function statementStartOffset(sql: string, cursorOffset: number): number {
 }
 
 const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
-  { value, onChange, connectionId, driver, scrollKey, database, onSchemaStatus, onRunQuery, onOpenObject }, ref) {
+  { value, onChange, connectionId, driver, scrollKey, database, onSchemaStatus, onRunQuery, onOpenObject, revealLine, revealNonce }, ref) {
   const monaco = useMonaco()
   const { theme } = useTheme()
   const { markConnected, connectEpoch } = useConnections()
@@ -203,6 +207,19 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter,       () => runCurrent(false))
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter, () => runCurrent(true))
   }, [monaco, editorReady])
+
+  // ── Reveal a requested line (search result click) ─────────────────────────
+  // Runs once the editor is ready and whenever a new reveal is requested.
+  useEffect(() => {
+    if (!editorReady || !revealLine) return
+    const editor = editorRef.current
+    const model = editor?.getModel()
+    if (!editor || !model) return
+    const line = Math.min(Math.max(1, revealLine), model.getLineCount())
+    editor.setPosition({ lineNumber: line, column: 1 })
+    editor.revealLineInCenter(line)
+    editor.focus()
+  }, [revealNonce, revealLine, editorReady])
 
   // ── Cmd/Ctrl+click navigation ──────────────────────────────────────────────
   // Cmd-hover underlines a known schema/table identifier; Cmd-click opens its

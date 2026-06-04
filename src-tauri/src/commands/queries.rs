@@ -17,6 +17,22 @@ pub struct Workspace {
     pub queries: Vec<QueryFileMeta>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SearchMatch {
+    pub line: u32,    // 1-based line number
+    pub text: String, // the matching line, trimmed and length-capped
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FileSearchResult {
+    pub workspace: String,
+    pub name: String,
+    pub path: String,
+    pub matches: Vec<SearchMatch>,
+    /// True when this file had more matches than the per-file cap returned.
+    pub truncated: bool,
+}
+
 fn queries_dir_path(app: &AppHandle, configured: Option<String>) -> Result<PathBuf, String> {
     if let Some(p) = configured {
         return Ok(PathBuf::from(p));
@@ -154,6 +170,58 @@ fn list_workspaces_in(dir: &Path) -> Result<Vec<Workspace>, String> {
 
     workspaces.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(workspaces)
+}
+
+/// Case-insensitive substring search across every workspace's `*.sql` file
+/// contents. Returns one entry per file with at least one matching line. Capped
+/// (per file and total) so a broad query can't produce an unbounded payload.
+fn search_in(dir: &Path, query: &str) -> Result<Vec<FileSearchResult>, String> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return Ok(Vec::new());
+    }
+    const MAX_PER_FILE: usize = 50;
+    const MAX_TOTAL: usize = 1000;
+
+    let mut out: Vec<FileSearchResult> = Vec::new();
+    let mut total = 0usize;
+
+    'outer: for ws in list_workspaces_in(dir)? {
+        for qf in ws.queries {
+            let content = match std::fs::read_to_string(&qf.path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let mut matches = Vec::new();
+            let mut truncated = false;
+            for (i, line) in content.lines().enumerate() {
+                if line.to_lowercase().contains(&q) {
+                    if matches.len() >= MAX_PER_FILE {
+                        truncated = true; // more matches exist beyond the cap
+                        break;
+                    }
+                    matches.push(SearchMatch {
+                        line: (i + 1) as u32,
+                        text: line.trim().chars().take(300).collect(),
+                    });
+                }
+            }
+            if !matches.is_empty() {
+                total += matches.len();
+                out.push(FileSearchResult {
+                    workspace: ws.name.clone(),
+                    name: qf.name,
+                    path: qf.path,
+                    matches,
+                    truncated,
+                });
+                if total >= MAX_TOTAL {
+                    break 'outer;
+                }
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Create a new workspace dir under `dir`. Errors if a sibling with that name
@@ -423,11 +491,64 @@ pub async fn create_query(
     create_query_in(&dir, &workspace, &name)
 }
 
+#[tauri::command]
+pub async fn search_queries(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    query: String,
+) -> Result<Vec<FileSearchResult>, String> {
+    let dir = resolve_queries_dir(&app, &state).await?;
+    migrate_root_to_default(&dir)?;
+    search_in(&dir, &query)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn search_in_finds_matches_across_workspaces_case_insensitively() {
+        let dir = TempDir::new().unwrap();
+        let a = dir.path().join("Analytics");
+        let b = dir.path().join("Billing");
+        fs::create_dir_all(&a).unwrap();
+        fs::create_dir_all(&b).unwrap();
+        fs::write(a.join("users.sql"), "SELECT * FROM users\nWHERE active = true").unwrap();
+        fs::write(b.join("invoices.sql"), "SELECT id FROM invoices").unwrap();
+        fs::write(b.join("notes.sql"), "-- nothing relevant here").unwrap();
+
+        // Case-insensitive: "from" matches both files that contain FROM.
+        let res = search_in(dir.path(), "from").unwrap();
+        let names: Vec<_> = res.iter().map(|r| (r.workspace.as_str(), r.name.as_str())).collect();
+        assert!(names.contains(&("Analytics", "users")));
+        assert!(names.contains(&("Billing", "invoices")));
+        assert_eq!(res.len(), 2); // notes.sql has no match
+
+        // Match carries the 1-based line number.
+        let users = res.iter().find(|r| r.name == "users").unwrap();
+        assert_eq!(users.matches[0].line, 1);
+        assert!(!users.truncated);
+
+        // Empty query → no results.
+        assert!(search_in(dir.path(), "   ").unwrap().is_empty());
+    }
+
+    #[test]
+    fn search_in_flags_truncated_when_over_the_per_file_cap() {
+        let dir = TempDir::new().unwrap();
+        let ws = dir.path().join("Big");
+        fs::create_dir_all(&ws).unwrap();
+        // 60 matching lines > MAX_PER_FILE (50).
+        let body = (0..60).map(|_| "match here").collect::<Vec<_>>().join("\n");
+        fs::write(ws.join("q.sql"), body).unwrap();
+
+        let res = search_in(dir.path(), "match").unwrap();
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].matches.len(), 50);
+        assert!(res[0].truncated);
+    }
 
     #[test]
     fn append_snapshot_creates_history_entry() {
