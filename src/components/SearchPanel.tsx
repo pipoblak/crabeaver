@@ -78,7 +78,7 @@ export default function SearchPanel({ width = 224 }: Props) {
     <aside className="flex flex-col shrink-0 overflow-hidden bg-th-sidebar" style={{ width, borderRight: '1px solid var(--border)' }}>
       <div className="px-3 py-2 shrink-0" style={{ borderBottom: '1px solid var(--border)' }}>
         <div className="text-[11px] font-semibold tracking-[0.1em] uppercase text-th-dim mb-2">Search</div>
-        <div className="flex items-center gap-1.5 px-2 rounded" style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}>
+        <div className="flex items-center gap-1.5 pl-2 pr-1 rounded" style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}>
           <SearchIcon size={12} className="text-th-dim shrink-0" />
           <input
             ref={inputRef}
@@ -90,8 +90,13 @@ export default function SearchPanel({ width = 224 }: Props) {
             style={{ color: 'var(--text)' }}
           />
           {loading
-            ? <Loader2 size={12} className="animate-spin text-th-dim shrink-0" />
-            : query && <button onClick={() => setQuery('')} className="text-th-dim hover:text-th-text shrink-0"><X size={12} /></button>}
+            ? <Loader2 size={12} className="animate-spin text-th-dim shrink-0 mx-1" />
+            : query && (
+              <button onClick={() => setQuery('')} title="Clear"
+                className="flex items-center justify-center shrink-0 w-5 h-5 rounded text-th-dim hover:text-th-text hover:bg-th-hover transition-colors">
+                <X size={12} />
+              </button>
+            )}
         </div>
         {q && searched && (
           <div className="text-[10px] text-th-dim mt-1.5">
