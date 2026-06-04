@@ -1,12 +1,13 @@
-import { Database, Search, Settings } from 'lucide-react'
+import { Database, Search, Server, Settings } from 'lucide-react'
 import { useEffect } from 'react'
 import type { AppView } from '@/App'
 
-export type SidebarPanel = 'connections' | 'search'
+export type SidebarPanel = 'connections' | 'search' | 'mcp'
 
 const navItems: { icon: typeof Database; label: string; panel: SidebarPanel }[] = [
   { icon: Database, label: 'Connections', panel: 'connections' },
   { icon: Search,   label: 'Search',      panel: 'search' },
+  { icon: Server,   label: 'MCP Server',  panel: 'mcp' },
 ]
 
 interface Props {

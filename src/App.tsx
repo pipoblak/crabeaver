@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import ActivityBar, { type SidebarPanel } from '@/components/ActivityBar'
 import Sidebar from '@/components/Sidebar'
 import SearchPanel from '@/components/SearchPanel'
+import McpPanel from '@/components/McpPanel'
 import EditorTabs from '@/components/EditorTabs'
 import SettingsTab from '@/components/SettingsTab'
 import StatusBar from '@/components/StatusBar'
@@ -46,6 +47,8 @@ function AppShell() {
           <>
             {sidebarPanel === 'search'
               ? <SearchPanel width={sidebarW} />
+              : sidebarPanel === 'mcp'
+              ? <McpPanel width={sidebarW} />
               : <Sidebar openSettings={openSettings} openTab={(type, title, extra) => { openSpecialTab(type as Tab['type'], title, extra) }} width={sidebarW} />}
             <ResizeHandle onMouseDown={sidebarDrag} />
           </>
