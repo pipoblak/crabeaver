@@ -146,10 +146,141 @@ pub fn authorize(
     }
 }
 
+// ── Tool layer ──────────────────────────────────────────────────────────────
+use serde::Serialize;
+
+use crate::application::{connections, introspection, query};
+
+#[derive(Serialize)]
+pub struct ExposedConn {
+    pub id: String,
+    pub name: String,
+    pub engine: String,
+    pub database: String,
+    pub write_allowed: bool,
+}
+
+/// Only exposed connections, with their write flag. Never includes passwords.
+pub async fn tool_list_connections(state: &AppState) -> Vec<ExposedConn> {
+    let f = flags(state).await;
+    let conns = connections::list(state).await.unwrap_or_default();
+    conns
+        .into_iter()
+        .filter_map(|c| {
+            let cf = f.get(&c.id).copied().unwrap_or_default();
+            if !cf.expose {
+                return None;
+            }
+            Some(ExposedConn {
+                id: c.id,
+                name: c.name,
+                engine: c.driver,
+                database: c.database,
+                write_allowed: cf.allow_write,
+            })
+        })
+        .collect()
+}
+
+/// Exposure check shared by the introspection tools (no SQL built here — these
+/// delegate to existing parameterized use cases).
+async fn require_exposed(state: &AppState, connection_id: &str) -> Result<(), GateError> {
+    authorize(&flags(state).await, connection_id, SqlKind::Read)
+}
+
+pub async fn tool_list_databases(state: &AppState, connection_id: &str) -> Result<Vec<String>, String> {
+    require_exposed(state, connection_id).await.map_err(|e| e.message().to_string())?;
+    introspection::list_databases(state, connection_id).await.map_err(|e| e.to_string())
+}
+
+pub async fn tool_list_schemas(
+    state: &AppState,
+    connection_id: &str,
+    database: Option<String>,
+) -> Result<serde_json::Value, String> {
+    require_exposed(state, connection_id).await.map_err(|e| e.message().to_string())?;
+    let s = introspection::schemas(state, connection_id, database).await.map_err(|e| e.to_string())?;
+    serde_json::to_value(s).map_err(|e| e.to_string())
+}
+
+pub async fn tool_describe_table(
+    state: &AppState,
+    connection_id: &str,
+    schema: &str,
+    table: &str,
+) -> Result<serde_json::Value, String> {
+    require_exposed(state, connection_id).await.map_err(|e| e.message().to_string())?;
+    let d = introspection::table_details(state, connection_id, schema, table).await.map_err(|e| e.to_string())?;
+    serde_json::to_value(d).map_err(|e| e.to_string())
+}
+
+pub const DEFAULT_QUERY_LIMIT: u32 = 200;
+pub const MAX_QUERY_LIMIT: u32 = 10_000;
+
+/// Append `LIMIT n` to a single bare SELECT that lacks one. Leaves writes,
+/// multi-statement input, and queries with an existing LIMIT untouched.
+pub fn with_limit(sql: &str, limit: u32) -> String {
+    let trimmed = sql.trim().trim_end_matches(';').trim();
+    let lower = trimmed.to_lowercase();
+    let single = !trimmed.contains(';'); // no inner statement separator
+    let is_select = lower.starts_with("select") || lower.starts_with("with");
+    let has_limit = lower.contains(" limit ");
+    if single && is_select && !has_limit {
+        format!("{trimmed} LIMIT {limit}")
+    } else {
+        sql.to_string()
+    }
+}
+
+#[derive(Serialize)]
+pub struct RunResult {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<serde_json::Value>>,
+    pub row_count: usize,
+    pub kind: &'static str, // "read" | "write"
+}
+
+/// The only raw-SQL surface. Runs the full gate, then delegates to `query::execute`.
+pub async fn tool_run_query(
+    state: &AppState,
+    connection_id: &str,
+    sql: &str,
+    limit: Option<u32>,
+) -> Result<RunResult, String> {
+    let kind = classify(sql);
+    authorize(&flags(state).await, connection_id, kind).map_err(|e| e.message().to_string())?;
+
+    let effective = match kind {
+        SqlKind::Read => with_limit(sql, limit.unwrap_or(DEFAULT_QUERY_LIMIT).min(MAX_QUERY_LIMIT)),
+        SqlKind::Write => sql.to_string(),
+    };
+    let result = query::execute(state, connection_id, &effective).await.map_err(|e| e.to_string())?;
+    let row_count = result.rows.len();
+    Ok(RunResult {
+        columns: result.columns.iter().map(|c| c.name.clone()).collect(),
+        rows: result.rows,
+        row_count,
+        kind: if kind == SqlKind::Read { "read" } else { "write" },
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::mcp::{McpConnFlags, SqlKind};
+
+    #[test]
+    fn limit_appended_only_to_bare_selects() {
+        assert_eq!(with_limit("SELECT * FROM t", 200), "SELECT * FROM t LIMIT 200");
+        assert_eq!(with_limit("SELECT * FROM t LIMIT 5", 200), "SELECT * FROM t LIMIT 5");
+        assert_eq!(with_limit("SELECT * FROM t;", 200), "SELECT * FROM t LIMIT 200");
+    }
+
+    #[test]
+    fn limit_not_appended_to_writes_or_multistatement() {
+        assert_eq!(with_limit("DELETE FROM t", 200), "DELETE FROM t");
+        assert_eq!(with_limit("SELECT 1; SELECT 2", 200), "SELECT 1; SELECT 2");
+    }
 
     fn k(sql: &str) -> SqlKind {
         classify(sql)
