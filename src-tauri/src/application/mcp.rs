@@ -232,7 +232,7 @@ pub fn with_limit(sql: &str, limit: u32) -> String {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct RunResult {
     pub columns: Vec<String>,
     pub rows: Vec<Vec<serde_json::Value>>,
