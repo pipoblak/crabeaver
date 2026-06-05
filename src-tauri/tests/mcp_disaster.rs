@@ -52,7 +52,7 @@ async fn mcp_blocks_writes_on_unexposed_and_non_write_connections() {
     assert!(mcp::authorize(&f, "c1", SqlKind::Read).is_err());
 
     // Exposed read-only → a write is rejected before it ever reaches the driver.
-    mcp::set_flags(&state, "c1", McpConnFlags { expose: true, allow_write: false }).await;
+    mcp::set_flags(&state, "c1", McpConnFlags { expose: true, allow_write: false, note: String::new() }).await;
     let write = mcp::tool_run_query(&state, "c1", "CREATE TABLE hax (x int)", None).await;
     assert!(write.is_err(), "write must be rejected on a non-write connection");
 
@@ -65,7 +65,7 @@ async fn mcp_blocks_writes_on_unexposed_and_non_write_connections() {
 async fn mcp_list_connections_never_contains_password() {
     let tmp = NamedTempFile::new().unwrap();
     let state = state_with_conn(tmp.path().to_str().unwrap()).await;
-    mcp::set_flags(&state, "c1", McpConnFlags { expose: true, allow_write: false }).await;
+    mcp::set_flags(&state, "c1", McpConnFlags { expose: true, allow_write: false, note: String::new() }).await;
 
     let list = mcp::tool_list_connections(&state).await;
     assert_eq!(list.len(), 1);

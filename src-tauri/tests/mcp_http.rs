@@ -48,3 +48,22 @@ async fn missing_or_wrong_token_is_401_correct_is_200() {
     let v: serde_json::Value = ok.json().await.unwrap();
     assert!(v["result"]["tools"].as_array().unwrap().len() == 5);
 }
+
+#[tokio::test]
+async fn initialize_includes_global_prompt_as_instructions() {
+    let state = test_state().await;
+    crabeaver_lib::application::mcp::set_global_prompt(&state, "house rules").await;
+
+    let sink: server::ActivitySink = Arc::new(|_| {});
+    let (port, _shutdown) = server::start(Arc::new(state), 0, "secret".into(), sink).await.unwrap();
+    let url = format!("http://127.0.0.1:{port}/mcp");
+
+    let resp: serde_json::Value = reqwest::Client::new()
+        .post(&url)
+        .bearer_auth("secret")
+        .json(&serde_json::json!({ "jsonrpc":"2.0","id":1,"method":"initialize","params":{} }))
+        .send().await.unwrap()
+        .json().await.unwrap();
+
+    assert_eq!(resp["result"]["instructions"], serde_json::json!("house rules"));
+}

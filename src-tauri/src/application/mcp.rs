@@ -11,6 +11,7 @@ const KEY_PORT: &str = "mcp_port";
 const KEY_TOKEN: &str = "mcp_token"; // legacy settings key — migrated to the keychain
 const KEY_FLAGS: &str = "mcp_conn_flags";
 const KEY_AUTOSTART: &str = "mcp_autostart";
+const KEY_PROMPT: &str = "mcp_global_prompt";
 /// Keychain account holding the MCP bearer token (a local-loopback capability
 /// token, kept beside DB passwords; never in the settings DB).
 const TOKEN_ID: &str = "mcp-server-token";
@@ -108,6 +109,34 @@ pub async fn flags(state: &AppState) -> HashMap<String, McpConnFlags> {
 pub async fn set_flags(state: &AppState, id: &str, f: McpConnFlags) {
     let mut map = flags(state).await;
     map.insert(id.to_string(), f);
+    if let Ok(json) = serde_json::to_string(&map) {
+        set(state, KEY_FLAGS, &json).await
+    }
+}
+
+pub async fn global_prompt(state: &AppState) -> String {
+    get(state, KEY_PROMPT).await.unwrap_or_default()
+}
+
+pub async fn set_global_prompt(state: &AppState, prompt: &str) {
+    set(state, KEY_PROMPT, prompt).await
+}
+
+/// Set expose/allow_write while preserving the existing note.
+pub async fn set_conn_flags(state: &AppState, id: &str, expose: bool, allow_write: bool) {
+    let mut map = flags(state).await;
+    let note = map.get(id).map(|f| f.note.clone()).unwrap_or_default();
+    map.insert(id.to_string(), McpConnFlags { expose, allow_write, note });
+    if let Ok(json) = serde_json::to_string(&map) {
+        set(state, KEY_FLAGS, &json).await
+    }
+}
+
+/// Set the note while preserving expose/allow_write.
+pub async fn set_conn_note(state: &AppState, id: &str, note: &str) {
+    let mut map = flags(state).await;
+    let entry = map.entry(id.to_string()).or_default();
+    entry.note = note.to_string();
     if let Ok(json) = serde_json::to_string(&map) {
         set(state, KEY_FLAGS, &json).await
     }
@@ -226,6 +255,7 @@ pub struct ExposedConn {
     pub engine: String,
     pub database: String,
     pub write_allowed: bool,
+    pub context: String,
 }
 
 /// Only exposed connections, with their write flag. Never includes passwords.
@@ -235,7 +265,7 @@ pub async fn tool_list_connections(state: &AppState) -> Vec<ExposedConn> {
     conns
         .into_iter()
         .filter_map(|c| {
-            let cf = f.get(&c.id).copied().unwrap_or_default();
+            let cf = f.get(&c.id).cloned().unwrap_or_default();
             if !cf.expose {
                 return None;
             }
@@ -245,6 +275,7 @@ pub async fn tool_list_connections(state: &AppState) -> Vec<ExposedConn> {
                 engine: c.driver,
                 database: c.database,
                 write_allowed: cf.allow_write,
+                context: cf.note,
             })
         })
         .collect()
@@ -279,7 +310,14 @@ pub async fn tool_describe_table(
 ) -> Result<serde_json::Value, String> {
     require_exposed(state, connection_id).await.map_err(|e| e.message().to_string())?;
     let d = introspection::table_details(state, connection_id, schema, table).await.map_err(|e| e.to_string())?;
-    serde_json::to_value(d).map_err(|e| e.to_string())
+    let mut val = serde_json::to_value(d).map_err(|e| e.to_string())?;
+    let note = flags(state).await.get(connection_id).map(|f| f.note.clone()).unwrap_or_default();
+    if !note.is_empty() {
+        if let Some(obj) = val.as_object_mut() {
+            obj.insert("connection_note".into(), serde_json::Value::String(note));
+        }
+    }
+    Ok(val)
 }
 
 pub const DEFAULT_QUERY_LIMIT: u32 = 200;
@@ -437,8 +475,64 @@ mod tests {
 
     fn flags_of(expose: bool, allow_write: bool) -> HashMap<String, McpConnFlags> {
         let mut m = HashMap::new();
-        m.insert("c1".to_string(), McpConnFlags { expose, allow_write });
+        m.insert("c1".to_string(), McpConnFlags { expose, allow_write, note: String::new() });
         m
+    }
+
+    /// AppState backed by a fresh in-memory settings DB with migrations applied.
+    async fn mem_state() -> AppState {
+        use crate::infrastructure::database::registry::DriverRegistry;
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        AppState {
+            db: pool,
+            drivers: DriverRegistry::new(),
+            biometric_cache: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            biometric_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+            schema_indices: std::sync::Arc::new(std::sync::RwLock::new(HashMap::new())),
+            mcp_shutdown: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+            mcp_activity: std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())),
+        }
+    }
+
+    #[tokio::test]
+    async fn note_and_flags_are_independent_and_global_prompt_persists() {
+        let state = mem_state().await;
+        set_conn_flags(&state, "c1", true, false).await;
+        set_conn_note(&state, "c1", "billing prod").await;
+        // setting flags again must not wipe the note
+        set_conn_flags(&state, "c1", true, true).await;
+        let f = flags(&state).await;
+        let c1 = f.get("c1").unwrap();
+        assert!(c1.expose && c1.allow_write);
+        assert_eq!(c1.note, "billing prod");
+        // setting the note must not wipe flags
+        set_conn_note(&state, "c1", "still here").await;
+        let f2 = flags(&state).await;
+        assert!(f2.get("c1").unwrap().expose);
+        assert_eq!(f2.get("c1").unwrap().note, "still here");
+        // global prompt roundtrip
+        assert_eq!(global_prompt(&state).await, "");
+        set_global_prompt(&state, "DBs of company X").await;
+        assert_eq!(global_prompt(&state).await, "DBs of company X");
+    }
+
+    #[tokio::test]
+    async fn list_connections_includes_context_for_exposed_only() {
+        let state = mem_state().await;
+        sqlx::query(
+            "INSERT INTO connections (id, name, driver, host, port, database_name, username, ssl_mode, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("c1").bind("Local").bind("sqlite").bind("").bind(0_i64)
+        .bind("dev.db").bind("").bind("").bind("")
+        .execute(&state.db).await.unwrap();
+        set_conn_flags(&state, "c1", true, false).await;
+        set_conn_note(&state, "c1", "sandbox").await;
+
+        let list = tool_list_connections(&state).await;
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].context, "sandbox");
     }
 
     #[test]
@@ -472,7 +566,7 @@ mod tests {
     #[test]
     fn flags_roundtrip_through_json_map() {
         let mut map = HashMap::new();
-        map.insert("c1".to_string(), McpConnFlags { expose: true, allow_write: false });
+        map.insert("c1".to_string(), McpConnFlags { expose: true, allow_write: false, note: String::new() });
         let json = serde_json::to_string(&map).unwrap();
         let back: HashMap<String, McpConnFlags> = serde_json::from_str(&json).unwrap();
         assert!(back.get("c1").unwrap().expose);

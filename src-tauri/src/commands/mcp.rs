@@ -23,6 +23,7 @@ async fn status_of(state: &AppState, running: bool) -> McpStatus {
         url: url(port),
         has_token: app::token(state).await.is_some(),
         autostart: app::autostart(state).await,
+        global_prompt: app::global_prompt(state).await,
     }
 }
 
@@ -128,7 +129,23 @@ pub async fn mcp_set_connection_flags(
     expose: bool,
     allow_write: bool,
 ) -> Result<(), String> {
-    app::set_flags(&state, &connection_id, McpConnFlags { expose, allow_write }).await;
+    app::set_conn_flags(&state, &connection_id, expose, allow_write).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn mcp_set_global_prompt(state: State<'_, AppState>, prompt: String) -> Result<(), String> {
+    app::set_global_prompt(&state, &prompt).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn mcp_set_connection_note(
+    state: State<'_, AppState>,
+    connection_id: String,
+    note: String,
+) -> Result<(), String> {
+    app::set_conn_note(&state, &connection_id, &note).await;
     Ok(())
 }
 

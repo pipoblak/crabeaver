@@ -79,11 +79,18 @@ async fn handle_post(State(ctx): State<Ctx>, headers: HeaderMap, Json(req): Json
     }
 
     let result: Result<Value, String> = match method {
-        "initialize" => Ok(json!({
-            "protocolVersion": "2025-03-26",
-            "serverInfo": { "name": "crabeaver", "version": env!("CARGO_PKG_VERSION") },
-            "capabilities": { "tools": {} }
-        })),
+        "initialize" => {
+            let prompt = app::global_prompt(&ctx.state).await;
+            let mut result = json!({
+                "protocolVersion": "2025-03-26",
+                "serverInfo": { "name": "crabeaver", "version": env!("CARGO_PKG_VERSION") },
+                "capabilities": { "tools": {} }
+            });
+            if !prompt.is_empty() {
+                result.as_object_mut().unwrap().insert("instructions".into(), json!(prompt));
+            }
+            Ok(result)
+        }
         "tools/list" => Ok(json!({ "tools": tool_schemas() })),
         "tools/call" => {
             let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");

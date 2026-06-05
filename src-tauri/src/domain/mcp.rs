@@ -1,10 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-/// Per-connection MCP exposure flags.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+/// Per-connection MCP exposure flags + user note.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct McpConnFlags {
     pub expose: bool,
     pub allow_write: bool,
+    /// Free-text context shown to the agent in `list_connections` / `describe_table`.
+    #[serde(default)]
+    pub note: String,
 }
 
 /// Classification of a `run_query` request.
@@ -23,6 +26,8 @@ pub struct McpStatus {
     pub has_token: bool,
     /// Whether the server auto-starts on app launch (opt-in, persisted).
     pub autostart: bool,
+    /// Free-text context sent to every client as `initialize.instructions`.
+    pub global_prompt: String,
 }
 
 /// One entry in the live activity log (ring buffer).
