@@ -1,14 +1,16 @@
 import { useState } from 'react'
-import { Palette, Code2, Database, Info, ChevronRight } from 'lucide-react'
+import { Palette, Code2, Database, Server, Info, ChevronRight } from 'lucide-react'
 import ThemesSection from '@/components/settings/ThemesSection'
 import ConnectionsSection from '@/components/settings/ConnectionsSection'
+import McpSection from '@/components/settings/McpSection'
 
-type Section = 'themes' | 'editor' | 'connections' | 'about'
+type Section = 'themes' | 'editor' | 'connections' | 'mcp' | 'about'
 
 const SECTIONS = [
   { id: 'themes'      as Section, label: 'Themes',      icon: Palette,  },
   { id: 'editor'      as Section, label: 'Editor',       icon: Code2,    },
   { id: 'connections' as Section, label: 'Connections',  icon: Database, },
+  { id: 'mcp'         as Section, label: 'MCP Server',   icon: Server,   },
   { id: 'about'       as Section, label: 'About',        icon: Info,     },
 ]
 
@@ -61,6 +63,7 @@ export default function SettingsTab({ initialSection, initialConnectionId }: { i
         {active === 'themes'      && <ThemesSection />}
         {active === 'editor'      && <EditorSection />}
         {active === 'connections' && <ConnectionsSection initialConnectionId={initialConnectionId} />}
+        {active === 'mcp'         && <McpSection />}
         {/* Stubs below */}
         {active === 'about'       && <AboutSection />}
       </div>

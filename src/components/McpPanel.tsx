@@ -1,10 +1,10 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Copy, RefreshCw, Check } from 'lucide-react'
 import { useMcp } from '@/hooks/useMcp'
 import { useConnections } from '@/context/ConnectionContext'
 
 export default function McpPanel({ width = 224 }: { width?: number }) {
-  const { status, token, clients, flags, activity, refresh, start, stop, rotate, setAutostart, setupClient, setConnFlags } = useMcp()
+  const { status, token, clients, flags, activity, refresh, start, stop, rotate, setAutostart, setupClient, setConnFlags, setGlobalPrompt, setConnNote } = useMcp()
   const { connections } = useConnections()
   const [copied, setCopied] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -50,6 +50,18 @@ export default function McpPanel({ width = 224 }: { width?: number }) {
 
         {err && <div className="px-3 py-1 text-[10px]" style={{ color: 'var(--error-text, #f87171)' }}>{err}</div>}
 
+        {/* Server prompt */}
+        <Section title="Server prompt">
+          <div className="px-3 py-1.5">
+            <NoteField
+              value={status?.global_prompt ?? ''}
+              placeholder="Context for every client (initialize.instructions)…"
+              onSave={setGlobalPrompt}
+              multiline
+            />
+          </div>
+        </Section>
+
         {/* Setup */}
         <Section title="Setup">
           {clients.map(c => (
@@ -71,20 +83,25 @@ export default function McpPanel({ width = 224 }: { width?: number }) {
         <Section title="Connections">
           {connections.length === 0 && <p className="px-3 py-1.5 text-[11px] text-th-dim">No connections.</p>}
           {connections.map(c => {
-            const f = flags[c.id] ?? { expose: false, allow_write: false }
+            const f = flags[c.id] ?? { expose: false, allow_write: false, note: '' }
             return (
-              <div key={c.id} className="flex items-center gap-2 px-3 py-1 text-[12px]">
-                <label className="flex items-center gap-1 text-[11px] text-th-dim cursor-pointer">
-                  <input type="checkbox" checked={f.expose}
-                    onChange={e => setConnFlags(c.id, e.target.checked, e.target.checked ? f.allow_write : false)} />
-                  expose
-                </label>
-                <label className="flex items-center gap-1 text-[11px] text-th-dim cursor-pointer" style={{ opacity: f.expose ? 1 : 0.4 }}>
-                  <input type="checkbox" disabled={!f.expose} checked={f.allow_write}
-                    onChange={e => setConnFlags(c.id, f.expose, e.target.checked)} />
-                  write
-                </label>
-                <span className="flex-1 truncate text-right" style={{ color: 'var(--text)' }}>{c.name}</span>
+              <div key={c.id} className="flex flex-col gap-1 px-3 py-1.5" style={{ borderBottom: '1px solid var(--border)' }}>
+                <div className="flex items-center gap-2 text-[12px]">
+                  <label className="flex items-center gap-1 text-[11px] text-th-dim cursor-pointer">
+                    <input type="checkbox" checked={f.expose}
+                      onChange={e => setConnFlags(c.id, e.target.checked, e.target.checked ? f.allow_write : false)} />
+                    expose
+                  </label>
+                  <label className="flex items-center gap-1 text-[11px] text-th-dim cursor-pointer" style={{ opacity: f.expose ? 1 : 0.4 }}>
+                    <input type="checkbox" disabled={!f.expose} checked={f.allow_write}
+                      onChange={e => setConnFlags(c.id, f.expose, e.target.checked)} />
+                    write
+                  </label>
+                  <span className="flex-1 truncate text-right" style={{ color: 'var(--text)' }}>{c.name}</span>
+                </div>
+                {f.expose && (
+                  <NoteField value={f.note ?? ''} placeholder="note for the agent…" onSave={v => setConnNote(c.id, v)} />
+                )}
               </div>
             )
           })}
@@ -107,6 +124,25 @@ export default function McpPanel({ width = 224 }: { width?: number }) {
       </div>
     </aside>
   )
+}
+
+function NoteField({ value, placeholder, onSave, multiline }: {
+  value: string; placeholder: string; onSave: (v: string) => void; multiline?: boolean
+}) {
+  const [draft, setDraft] = useState(value)
+  useEffect(() => { setDraft(value) }, [value])
+  const commit = () => { if (draft !== value) onSave(draft) }
+  const common = {
+    value: draft,
+    placeholder,
+    onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setDraft(e.target.value),
+    onBlur: commit,
+    className: 'w-full text-[11px] rounded px-1.5 py-1 outline-none resize-none',
+    style: { background: 'var(--sidebar-bg)', border: '1px solid var(--border)', color: 'var(--text)' },
+  }
+  return multiline
+    ? <textarea {...common} rows={2} />
+    : <input {...common} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }} />
 }
 
 function fmtTime(ms: number): string {

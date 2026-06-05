@@ -1,10 +1,10 @@
 import { useState, useCallback, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 
-export interface McpStatus { running: boolean; port: number; url: string; has_token: boolean; autostart: boolean }
+export interface McpStatus { running: boolean; port: number; url: string; has_token: boolean; autostart: boolean; global_prompt: string }
 export interface ClientTarget { id: string; name: string; installed: boolean; detected: boolean; can_setup: boolean }
 export interface ActivityEntry { at: number; tool: string; connection: string; summary: string }
-export type ConnFlags = Record<string, { expose: boolean; allow_write: boolean }>
+export type ConnFlags = Record<string, { expose: boolean; allow_write: boolean; note: string }>
 
 const ACTIVITY_MAX = 100
 
@@ -48,6 +48,12 @@ export function useMcp() {
   const setConnFlags = useCallback(async (connectionId: string, expose: boolean, allowWrite: boolean) => {
     await invoke('mcp_set_connection_flags', { connectionId, expose, allowWrite }); await refresh()
   }, [refresh])
+  const setGlobalPrompt = useCallback(async (prompt: string) => {
+    await invoke('mcp_set_global_prompt', { prompt }); await refresh()
+  }, [refresh])
+  const setConnNote = useCallback(async (connectionId: string, note: string) => {
+    await invoke('mcp_set_connection_note', { connectionId, note }); await refresh()
+  }, [refresh])
 
-  return { status, token, clients, flags, activity, refresh, start, stop, rotate, setAutostart, setPort, setupClient, setConnFlags }
+  return { status, token, clients, flags, activity, refresh, start, stop, rotate, setAutostart, setPort, setupClient, setConnFlags, setGlobalPrompt, setConnNote }
 }
