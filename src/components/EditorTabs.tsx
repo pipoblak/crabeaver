@@ -285,7 +285,7 @@ export default function EditorTabs() {
       return new Map(prev).set(editorTab.id, {
         ...curr,
         tabs: curr.tabs.map(t => t.id === resultTabId
-          ? { ...t, running: true, error: undefined, sql, baseSql: rawSql, colFilters: undefined, colFilterOps: undefined, history: undefined, future: undefined }
+          ? { ...t, running: true, error: undefined, sql, baseSql: rawSql, sortCol: undefined, sortDir: undefined, colFilters: undefined, colFilterOps: undefined, history: undefined, future: undefined }
           : t),
       })
     })
@@ -307,7 +307,7 @@ export default function EditorTabs() {
           ...curr,
           tabs: curr.tabs.map(t => t.id === resultTabId
             ? { ...t, running: false, data: withColumns(data, t.data), error: undefined, sql, baseSql: rawSql,
-                ranAt: Date.now(), offset: data.rows.length, hasMore, colFilters: undefined, colFilterOps: undefined }
+                ranAt: Date.now(), offset: data.rows.length, hasMore, sortCol: undefined, sortDir: undefined, colFilters: undefined, colFilterOps: undefined }
             : t),
         }
         persistResults(editorTab.id, next)
