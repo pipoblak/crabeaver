@@ -60,6 +60,11 @@ fn pg_col_to_json(row: &sqlx::postgres::PgRow, i: usize) -> serde_json::Value {
         "FLOAT8" => {
             try_get!(f64, |n| serde_json::json!(n));
         }
+        // NUMERIC/DECIMAL: decode via BigDecimal (sqlx won't read it as String) and
+        // emit the exact decimal as a JSON string — no precision loss for money values.
+        "NUMERIC" | "DECIMAL" => {
+            try_get!(sqlx::types::BigDecimal, |d: sqlx::types::BigDecimal| J::String(d.to_string()));
+        }
         "JSON" | "JSONB" => {
             try_get!(serde_json::Value, |v| v);
         }
