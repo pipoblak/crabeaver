@@ -6,6 +6,25 @@ function isStatementStart(line: string): boolean {
   return STMT_KEYWORDS.test(line.trimStart())
 }
 
+/** Net `(` − `)` of a line, ignoring parens in single-quoted strings and `--`
+ *  comments. Lets us know we're inside a subquery so a subquery's `SELECT` on its
+ *  own line doesn't falsely start a new statement. */
+function netParens(line: string): number {
+  let d = 0, inStr = false
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i]
+    if (inStr) {
+      if (c === "'") { if (line[i + 1] === "'") i++; else inStr = false }
+      continue
+    }
+    if (c === "'") { inStr = true; continue }
+    if (c === '-' && line[i + 1] === '-') break // rest of line is a comment
+    if (c === '(') d++
+    else if (c === ')') d--
+  }
+  return d
+}
+
 export interface Statement {
   start: number   // 0-indexed line in the full file
   text: string
@@ -17,22 +36,26 @@ export function splitStatements(lines: string[]): Statement[] {
   let current: string[] = []
   let currentStart = 0
   let prevEndedWithSemi = false
+  let depth = 0 // open-paren depth — boundaries only apply at depth 0 (top level)
 
   const flush = () => {
     while (current.length > 0 && current[current.length - 1].trim() === '') current.pop()
     if (current.length > 0)
       stmts.push({ start: currentStart, text: current.join('\n'), lineCount: current.length })
     current = []
+    depth = 0
   }
 
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim()
-    // A blank line ends the current statement; the blank itself belongs to none.
-    if (trimmed === '') { flush(); prevEndedWithSemi = false; continue }
-    // A new statement-start keyword or a prior `;` also begins a new statement.
-    if (current.length > 0 && (isStatementStart(lines[i]) || prevEndedWithSemi)) flush()
+    // A blank line ends the current statement — but not inside a subquery.
+    if (trimmed === '' && depth === 0) { flush(); prevEndedWithSemi = false; continue }
+    // A statement-start keyword or a prior `;` begins a new statement — but only at
+    // the top level, so a subquery's `SELECT` (depth > 0) doesn't split the query.
+    if (current.length > 0 && depth === 0 && (isStatementStart(lines[i]) || prevEndedWithSemi)) flush()
     if (current.length === 0) currentStart = i
     current.push(lines[i])
+    depth = Math.max(0, depth + netParens(lines[i]))
     prevEndedWithSemi = trimmed.endsWith(';')
   }
   flush()

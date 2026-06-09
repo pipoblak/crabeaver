@@ -15,6 +15,32 @@ describe('sqlWorker splitter — pathological input', () => {
     expect(splitStatements(['SELECT 1', 'FROM t']).length).toBeGreaterThanOrEqual(1)
   })
 
+  it('keeps a subquery whose SELECT starts a line as ONE statement', () => {
+    const lines = [
+      'select a from t where id in (',
+      'select id from other',          // subquery SELECT at line start — must NOT split
+      "where status = 'x'",
+      ')',
+      'and y = 1;',
+    ]
+    const stmts = splitStatements(lines)
+    expect(stmts).toHaveLength(1)
+    expect(stmts[0].text).toContain('select id from other')
+    expect(stmts[0].text).toContain('and y = 1')
+  })
+
+  it('ignores parens inside strings and -- comments when tracking depth', () => {
+    const lines = [
+      'select a from t where id in (',
+      "  --and note in ('x','y')",     // parens in a comment must not affect depth
+      "  select id from o where n = '(' ",  // a '(' inside a string
+      ')',
+      'select b from t2;',             // a real top-level statement after the close
+    ]
+    const stmts = splitStatements(lines)
+    expect(stmts).toHaveLength(2)
+  })
+
   it('does not hang on a megabyte single line', () => {
     const huge = 'SELECT ' + '1,'.repeat(500_000) + '1'
     const start = performance.now()
