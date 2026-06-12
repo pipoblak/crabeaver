@@ -402,6 +402,21 @@ pub async fn delete_query_file(path: String) -> Result<(), String> {
 /// Write exported result data to the user's Downloads directory and return the
 /// full path. `filename` is reduced to a basename (path separators stripped) so a
 /// crafted column/table name can't escape the directory.
+/// Open a native "save as" dialog defaulting to `filename`, write `contents` to
+/// the chosen path, and return it. Returns `None` if the user cancels.
+#[tauri::command]
+pub async fn save_with_dialog(filename: String, contents: String) -> Result<Option<String>, String> {
+    let safe = filename.replace(['/', '\\'], "_");
+    let safe = safe.trim();
+    let safe = if safe.is_empty() { "export.txt" } else { safe };
+
+    let handle = rfd::AsyncFileDialog::new().set_file_name(safe).save_file().await;
+    let Some(file) = handle else { return Ok(None) };
+    let path = file.path().to_path_buf();
+    std::fs::write(&path, contents).map_err(|e| e.to_string())?;
+    Ok(Some(path.to_string_lossy().to_string()))
+}
+
 #[tauri::command]
 pub async fn save_to_downloads(
     app:      AppHandle,

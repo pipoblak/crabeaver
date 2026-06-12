@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Plus, Trash2, Plug, PlugZap, Loader2, CheckCircle, XCircle, Fingerprint } from 'lucide-react'
 import { useConfirm } from '@/context/ConfirmContext'
+import { useConnections } from '@/context/ConnectionContext'
 import { CONNECTORS, descriptorFor } from '@/connectors/registry'
 import { cacheGet, cacheSet, cacheDelete } from '@/lib/cache'
 
@@ -33,6 +34,8 @@ export default function ConnectionsSection({ initialConnectionId }: { initialCon
   const [bioStatus, setBioStatus]     = useState<string | null>(null)
   const [connectedIds, setConnected]  = useState(new Set<string>())
   const confirm = useConfirm()
+  // Keep the global connection list (selector, sidebar) in sync after mutations.
+  const { reload: reloadConnections } = useConnections()
   const [toast, setToast]             = useState<{ ok: boolean; msg: string } | null>(null)
   const [pwdSaved, setPwdSaved]       = useState(true)
   const toastTimer                    = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -110,6 +113,7 @@ export default function ConnectionsSection({ initialConnectionId }: { initialCon
         setSelected(saved)
         setIsNew(false)
         cacheSet('has-password', saved.id, !!password)
+        reloadConnections()
         showToast(true, 'Connection saved.')
       } else if (selected) {
         await invoke('update_connection', {
@@ -118,6 +122,7 @@ export default function ConnectionsSection({ initialConnectionId }: { initialCon
         })
         setConnections(prev => prev.map(c => c.id === selected.id ? { ...c, ...connFields } : c))
         if (form.password) { setPwdSaved(true); cacheSet('has-password', selected.id, true) }
+        reloadConnections()
         showToast(true, 'Connection updated.')
       }
     } catch (e) {
@@ -134,6 +139,7 @@ export default function ConnectionsSection({ initialConnectionId }: { initialCon
     cacheDelete('has-password', id)
     setConnections(prev => prev.filter(c => c.id !== id))
     if (selected?.id === id) { setSelected(null); setIsNew(false) }
+    reloadConnections()
   }
 
   const toggleConnect = async (c: Connection) => {

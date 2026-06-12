@@ -108,14 +108,17 @@ function ResultTable({ result, tab, fkColumns, fkRefs, onSort, onColumnFilter, o
     setSaved(null)
     try {
       const data = fetchAll ? await fetchAll() : result
-      const path = await invoke<string>('save_to_downloads', {
+      // Native "save as" dialog — user picks the destination. null = cancelled.
+      const path = await invoke<string | null>('save_with_dialog', {
         filename: exportFilename(tab.title, fmt),
         contents: formatResult(data, fmt),
       })
-      setSaved(path)
-      if (savedTimer.current) clearTimeout(savedTimer.current)
-      savedTimer.current = setTimeout(() => setSaved(null), 4000)
-    } catch { /* save failed (e.g. directory unavailable) */ }
+      if (path) {
+        setSaved(path)
+        if (savedTimer.current) clearTimeout(savedTimer.current)
+        savedTimer.current = setTimeout(() => setSaved(null), 4000)
+      }
+    } catch { /* save failed or cancelled */ }
     finally { setDownloading(false) }
   }
   const scrollRef      = useRef<HTMLDivElement>(null)

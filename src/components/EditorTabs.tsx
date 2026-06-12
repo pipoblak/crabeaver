@@ -5,6 +5,7 @@ import { cacheGet, cacheSet } from '@/lib/cache'
 import { invoke } from '@tauri-apps/api/core'
 import { useTabs } from '@/context/TabsContext'
 import { useTaskActions } from '@/context/TasksContext'
+import { useConnections } from '@/context/ConnectionContext'
 import { useTrackedQuery, sqlPreview } from '@/hooks/useTrackedQuery'
 import SqlEditor, { type SqlEditorRef } from '@/components/SqlEditor'
 // Lazy-loaded: these tabs aren't part of the default query view, so their code
@@ -18,7 +19,6 @@ import ResizeHandle from '@/components/ResizeHandle'
 import HotkeysHelp from '@/components/HotkeysHelp'
 import { applyLimit, buildFilterPredicate, quoteIdent, driverToDialect } from '@/lib/queryBuilder'
 
-interface Connection { id: string; name: string; driver: string; database: string }
 
 interface TabResults {
   tabs:     ResultTab[]
@@ -87,7 +87,7 @@ export default function EditorTabs() {
 
   const [editingId, setEditingId]      = useState<number | null>(null)
   const [editTitle, setEditTitle]      = useState('')
-  const [connections, setConnections]  = useState<Connection[]>([])
+  const { connections } = useConnections()
   const [databases, setDatabases]      = useState<string[]>([])
   const [schemaStatus, setSchemaStatus]= useState<{
     tables: number; error?: string; fetchedAt?: number;
@@ -108,10 +108,6 @@ export default function EditorTabs() {
   const draggingRef   = useRef(false)
   const dragStartY    = useRef(0)
   const dragStartH    = useRef(0)
-
-  useEffect(() => {
-    invoke<Connection[]>('list_connections').then(setConnections).catch(() => {})
-  }, [])
 
   // ── On tab switch: restore the active tab's results, evict stale ones ──────
   // Keeps only the RESULT_LRU most-recently-active tabs' rows in memory. Older
