@@ -186,12 +186,16 @@ const loadingRef     = useRef(false)
     }
   }
 
+  // Column id MUST be unique (TanStack drops duplicates) — but a result can have
+  // repeated column names (joins, `a.id` + `b.id`). Key columns by position and
+  // carry the real name in meta for the header, sort, filter, and FK lookups.
   const columns = useMemo<ColumnDef<unknown[]>[]>(() => result.columns.map((col, i) => ({
-    id:         col.name,
+    id:         String(i),
     accessorFn: (row: unknown[]) => row[i],
     header:     col.name,
-    meta:       { typeName: col.typeName },
+    meta:       { typeName: col.typeName, name: col.name },
   })), [result.columns])
+  const colName = (id: string) => result.columns[Number(id)]?.name ?? id
 
   const table = useReactTable({
     data:    result.rows,
@@ -276,12 +280,12 @@ const loadingRef     = useRef(false)
       const picked = rows.filter(r => selected.has(r.id)).map(r => r.original as unknown[])
       navigator.clipboard.writeText(formatResult({ ...result, rows: picked }, 'text')).catch(() => {})
     } else if (selCells.size) {
-      // Copy selected cell values in display order (row-major), tab/newline joined.
-      const colIds = result.columns.map(c => c.name)
+      // Copy selected cell values in display (positional) order, row-major.
       const lines = rows.flatMap(r => {
-        const vals = colIds
-          .filter(c => selCells.has(cellKey(r.id, c)))
-          .map(c => { const v = (r.original as unknown[])[colIds.indexOf(c)]; return v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v) })
+        const vals = result.columns
+          .map((_, idx) => String(idx))
+          .filter(cid => selCells.has(cellKey(r.id, cid)))
+          .map(cid => { const v = (r.original as unknown[])[Number(cid)]; return v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v) })
         return vals.length ? [vals.join('\t')] : []
       })
       navigator.clipboard.writeText(lines.join('\n')).catch(() => {})
@@ -400,7 +404,8 @@ const loadingRef     = useRef(false)
                              userSelect: 'none', WebkitUserSelect: 'none', color: 'var(--text-dim)', fontWeight: 600,
                              fontSize: 10, whiteSpace: 'nowrap', background: 'var(--sidebar-bg)' }}>#</th>
                 {hg.headers.map(h => {
-                  const isSort = sortCol === h.column.id
+                  const name   = colName(h.column.id)
+                  const isSort = sortCol === name
                   return (
                     <th key={h.id}
                       style={{ padding: '4px 10px', borderBottom: '1px solid var(--border)',
@@ -408,11 +413,11 @@ const loadingRef     = useRef(false)
                                userSelect: 'none', whiteSpace: 'nowrap', position: 'relative' }}>
                       <div className="flex items-center gap-1">
                         <div className="flex items-center gap-1 cursor-pointer flex-1"
-                          onClick={() => handleHeaderClick(h.column.id)}>
-                          {fkColumns?.has(h.column.id) && (
+                          onClick={() => handleHeaderClick(name)}>
+                          {fkColumns?.has(name) && (
                             <Link size={9} className="text-th-dim shrink-0" />
                           )}
-                          <span className="font-semibold text-th-bright">{h.column.id}</span>
+                          <span className="font-semibold text-th-bright">{name}</span>
                           <span className="text-th-dim" style={{ fontSize: 10 }}>
                             {(h.column.columnDef.meta as { typeName?: string })?.typeName ?? ''}
                           </span>
@@ -422,13 +427,13 @@ const loadingRef     = useRef(false)
                         </div>
                         {/* Filter icon — accent-colored when active */}
                         <button
-                          onClick={e => { e.stopPropagation(); setFilterPopup(p => p === h.column.id ? null : h.column.id) }}
-                          style={{ color: localFilters[h.column.id] ? 'var(--tab-accent)' : 'var(--text-dim)', lineHeight: 0 }}>
+                          onClick={e => { e.stopPropagation(); setFilterPopup(p => p === name ? null : name) }}
+                          style={{ color: localFilters[name] ? 'var(--tab-accent)' : 'var(--text-dim)', lineHeight: 0 }}>
                           <Filter size={10} />
                         </button>
                       </div>
                       {/* Filter popup */}
-                      {filterPopup === h.column.id && (
+                      {filterPopup === name && (
                         <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 20,
                                       background: 'var(--sidebar-bg)', border: '1px solid var(--border)',
                                       borderRadius: 4, padding: '6px 8px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
@@ -438,11 +443,11 @@ const loadingRef     = useRef(false)
                           <div className="flex gap-1 mb-2">
                             {(['~', '=', '!=', '>', '<'] as const).map(op => (
                               <button key={op}
-                                onClick={() => handleOpChange(h.column.id, op)}
+                                onClick={() => handleOpChange(name, op)}
                                 className="text-[10px] px-1.5 py-0.5 rounded transition-colors"
                                 style={{
-                                  background: (localOps[h.column.id] ?? '~') === op ? 'var(--tab-accent)' : 'var(--hover)',
-                                  color:      (localOps[h.column.id] ?? '~') === op ? '#fff' : 'var(--text-dim)',
+                                  background: (localOps[name] ?? '~') === op ? 'var(--tab-accent)' : 'var(--hover)',
+                                  color:      (localOps[name] ?? '~') === op ? '#fff' : 'var(--text-dim)',
                                   border:     '1px solid var(--border)',
                                 }}>
                                 {op === '~' ? 'contains' : op}
@@ -451,16 +456,16 @@ const loadingRef     = useRef(false)
                           </div>
                           <input
                             autoFocus
-                            value={localFilters[h.column.id] ?? ''}
-                            onChange={e => handleFilterChange(h.column.id, e.target.value)}
+                            value={localFilters[name] ?? ''}
+                            onChange={e => handleFilterChange(name, e.target.value)}
                             onKeyDown={e => e.key === 'Escape' && setFilterPopup(null)}
-                            placeholder={`Filter ${h.column.id}…`}
+                            placeholder={`Filter ${name}…`}
                             className="text-[11px] bg-transparent outline-none w-full"
                             style={{ borderBottom: '1px solid var(--border)', color: 'var(--text)', padding: '2px 0' }}
                           />
-                          {localFilters[h.column.id] && (
+                          {localFilters[name] && (
                             <button className="text-[10px] text-th-dim hover:text-th-accent mt-1 block"
-                              onClick={() => { handleFilterChange(h.column.id, ''); setFilterPopup(null) }}>
+                              onClick={() => { handleFilterChange(name, ''); setFilterPopup(null) }}>
                               clear
                             </button>
                           )}
@@ -492,9 +497,10 @@ const loadingRef     = useRef(false)
                 </td>
                 {row.getVisibleCells().map(cell => {
                   const val    = cell.getValue()
-                  const colId  = cell.column.id
-                  const isFk   = fkColumns?.has(colId) && val !== null && val !== undefined
-                  const fkRef  = isFk ? fkRefs?.get(colId) : undefined
+                  const colId  = cell.column.id     // unique position id (selection key)
+                  const name   = colName(colId)     // real column name (FK lookup)
+                  const isFk   = fkColumns?.has(name) && val !== null && val !== undefined
+                  const fkRef  = isFk ? fkRefs?.get(name) : undefined
                   const display = val === null    ? 'NULL'
                                 : val === true    ? 'true'
                                 : val === false   ? 'false'
