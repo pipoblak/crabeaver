@@ -281,10 +281,13 @@ export default function EditorTabs() {
       return new Map(prev).set(editorTab.id, {
         ...curr,
         tabs: curr.tabs.map(t => t.id === resultTabId
-          ? { ...t, running: true, error: undefined, sql, baseSql: rawSql, sortCol: undefined, sortDir: undefined, colFilters: undefined, colFilterOps: undefined, history: undefined, future: undefined }
+          ? { ...t, running: true, loadingMore: false, error: undefined, sql, baseSql: rawSql, sortCol: undefined, sortDir: undefined, colFilters: undefined, colFilterOps: undefined, history: undefined, future: undefined }
           : t),
       })
     })
+    // A fresh run replaces the result — drop any in-flight load-more's activity
+    // entry so the monitor doesn't show a stale "· more" alongside the new run.
+    endTask(`load-more:${resultTabId}`)
     startTask({
       id: `query:${resultTabId}`,
       kind: 'query',
