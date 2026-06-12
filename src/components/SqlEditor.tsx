@@ -180,27 +180,10 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
     const runCurrent = (newTab: boolean) => {
       const cb = onRunQueryRef.current
       if (!cb) return
-      const model = editor.getModel()
-      if (!model) return
-      const sel  = editor.getSelection()
-      const selectedText = sel && !sel.isEmpty() ? model.getValueInRange(sel) : null
-      if (selectedText?.trim()) { cb(selectedText.trim(), newTab); return }
-      // Run statement containing cursor. Bound it by a `;` OR a blank line in
-      // either direction, matching how the editor splits/highlights statements.
-      const pos    = editor.getPosition()
-      const offset = pos ? model.getOffsetAt(pos) : 0
-      const sql    = model.getValue()
-      const after  = sql.slice(offset)
-      // Start: last `;` or blank line before the cursor (whichever is closer).
-      const start = statementStartOffset(sql, offset)
-      // End: next `;` (inclusive) or next blank line, whichever comes first.
-      let end = sql.length
-      const semiForward  = after.indexOf(';')
-      if (semiForward >= 0) end = offset + semiForward + 1
-      const blankForward = after.search(/\n[ \t]*\n/)
-      if (blankForward >= 0) end = Math.min(end, offset + blankForward)
-      const stmt = sql.slice(start, end).trim()
-      if (stmt) cb(stmt, newTab)
+      // Statement detection (selection vs the statement under the cursor, with a
+      // boundary-safe fallback) is centralised in getRunTargets, which the run
+      // handler invokes. Here we just trigger it — the passed text is ignored.
+      cb('', newTab)
     }
 
     // addCommand returns a string ID, not a disposable — commands live with the editor instance
