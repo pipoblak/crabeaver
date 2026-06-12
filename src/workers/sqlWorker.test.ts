@@ -33,12 +33,29 @@ describe('sqlWorker splitter — pathological input', () => {
     const lines = [
       'select a from t where id in (',
       "  --and note in ('x','y')",     // parens in a comment must not affect depth
-      "  select id from o where n = '(' ",  // a '(' inside a string
-      ')',
-      'select b from t2;',             // a real top-level statement after the close
+      "  select id from o where n = '(' ",  // a '(' inside a string must not open depth
+      ');',                            // closes the subquery; ; ends the statement
+      'select b from t2;',             // a real top-level statement after the ;
     ]
     const stmts = splitStatements(lines)
     expect(stmts).toHaveLength(2)
+    expect(stmts[1].text).toBe('select b from t2;')
+  })
+
+  it('keeps a WITH … ) SELECT (CTE tail) as ONE statement', () => {
+    const lines = [
+      'WITH hexed AS (',
+      '  SELECT substr(d, 1) AS x',     // CTE-body SELECT (depth > 0) must not split
+      '  FROM log',
+      '),',
+      'located AS (',                   // next CTE — not a keyword, must not split
+      '  SELECT * FROM hexed',
+      ')',
+      'SELECT * FROM located;',         // the tail SELECT at depth 0 must NOT split off
+    ]
+    const stmts = splitStatements(lines)
+    expect(stmts).toHaveLength(1)
+    expect(stmts[0].text).toContain('SELECT * FROM located')
   })
 
   it('does not hang on a megabyte single line', () => {

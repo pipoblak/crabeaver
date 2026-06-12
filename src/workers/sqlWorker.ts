@@ -1,11 +1,5 @@
 import { expose } from 'comlink'
 
-const STMT_KEYWORDS = /^(SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|TRUNCATE|WITH|MERGE|CALL|EXPLAIN)\b/i
-
-function isStatementStart(line: string): boolean {
-  return STMT_KEYWORDS.test(line.trimStart())
-}
-
 /** Net `(` − `)` of a line, ignoring parens in single-quoted strings and `--`
  *  comments. Lets us know we're inside a subquery so a subquery's `SELECT` on its
  *  own line doesn't falsely start a new statement. */
@@ -50,9 +44,10 @@ export function splitStatements(lines: string[]): Statement[] {
     const trimmed = lines[i].trim()
     // A blank line ends the current statement — but not inside a subquery.
     if (trimmed === '' && depth === 0) { flush(); prevEndedWithSemi = false; continue }
-    // A statement-start keyword or a prior `;` begins a new statement — but only at
-    // the top level, so a subquery's `SELECT` (depth > 0) doesn't split the query.
-    if (current.length > 0 && depth === 0 && (isStatementStart(lines[i]) || prevEndedWithSemi)) flush()
+    // Only a top-level `;` begins a new statement. We deliberately do NOT split on
+    // a line starting with a keyword (SELECT/WITH/…): that wrongly cut `WITH … )
+    // SELECT …` (the tail SELECT) and subquery SELECTs into incomplete fragments.
+    if (current.length > 0 && depth === 0 && prevEndedWithSemi) flush()
     if (current.length === 0) currentStart = i
     current.push(lines[i])
     depth = Math.max(0, depth + netParens(lines[i]))
