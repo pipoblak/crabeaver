@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Copy, RefreshCw, Check } from 'lucide-react'
+import { Copy, RefreshCw, Check, Loader2 } from 'lucide-react'
 import { useMcp } from '@/hooks/useMcp'
 import { useConnections } from '@/context/ConnectionContext'
 
@@ -8,9 +8,13 @@ export default function McpPanel({ width = 224 }: { width?: number }) {
   const { connections } = useConnections()
   const [copied, setCopied] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  const [installing, setInstalling] = useState<string | null>(null) // client id being (re)installed
 
-  const doSetup = (id: string) => {
-    setupClient(id).catch(e => { setErr(String(e).replace(/^.*Error: /, '')); setTimeout(() => setErr(null), 4000) })
+  const doSetup = async (id: string) => {
+    setInstalling(id)
+    try { await setupClient(id) }
+    catch (e) { setErr(String(e).replace(/^.*Error: /, '')); setTimeout(() => setErr(null), 4000) }
+    finally { setInstalling(null) }
   }
 
   const copy = (key: string, text: string) => {
@@ -64,10 +68,14 @@ export default function McpPanel({ width = 224 }: { width?: number }) {
 
         {/* Setup */}
         <Section title="Setup">
-          {clients.map(c => (
+          {clients.map(c => {
+            const busy = installing === c.id
+            return (
             <div key={c.id} className="flex items-center gap-2 px-3 py-1 text-[12px]">
               <span className="flex-1 truncate" style={{ color: c.detected ? 'var(--text)' : 'var(--text-dim)' }}>{c.name}</span>
-              {c.installed
+              {busy
+                ? <span className="flex items-center gap-1 text-[10px] text-th-dim"><Loader2 size={11} className="animate-spin" />installing…</span>
+                : c.installed
                 ? <>
                     <span className="text-[10px] text-th-dim">installed</span>
                     <button onClick={() => doSetup(c.id)} title="Reinstall (re-apply current token)" className="text-[11px] text-th-accent hover:underline">Reinstall</button>
@@ -76,7 +84,8 @@ export default function McpPanel({ width = 224 }: { width?: number }) {
                 ? <button onClick={() => doSetup(c.id)} className="text-[11px] text-th-accent hover:underline">Set up</button>
                 : <span className="text-[10px] text-th-dim">copy only</span>}
             </div>
-          ))}
+            )
+          })}
         </Section>
 
         {/* Connections */}
