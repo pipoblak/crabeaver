@@ -25,11 +25,14 @@ pub fn merge_mcp_servers(existing: Value, url: &str, token: &str) -> Value {
     root
 }
 
-/// Argv for `claude mcp add` (Claude Code special-cases to its CLI).
+/// Argv for `claude mcp add` (Claude Code special-cases to its CLI). Installed at
+/// `user` scope so it's available in every project, not just the current one.
 pub fn claude_code_args(url: &str, token: &str) -> Vec<String> {
     vec![
         "mcp".into(),
         "add".into(),
+        "--scope".into(),
+        "user".into(),
         "--transport".into(),
         "http".into(),
         "crabeaver".into(),
@@ -118,7 +121,7 @@ pub fn install(id: &str, url: &str, token: &str) -> Result<(), String> {
         // Remove any existing entry first so re-install (and a rotated token) is
         // applied — `claude mcp add` refuses to overwrite an existing server.
         let _ = std::process::Command::new("claude")
-            .args(["mcp", "remove", "crabeaver", "-s", "local"])
+            .args(["mcp", "remove", "crabeaver", "-s", "user"])
             .output();
         let out = std::process::Command::new("claude")
             .args(claude_code_args(url, token))
@@ -181,6 +184,8 @@ mod tests {
             vec![
                 "mcp",
                 "add",
+                "--scope",
+                "user",
                 "--transport",
                 "http",
                 "crabeaver",
