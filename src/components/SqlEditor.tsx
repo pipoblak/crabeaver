@@ -751,9 +751,10 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
       const stmts      = await worker.splitStatements(lines)
       // Statement under the cursor. If the cursor sits on a blank/trailing line
       // that no statement covers (e.g. just after typing one), fall back to the
-      // nearest statement at or above the cursor, else the first one.
+      // nearest statement AT OR ABOVE the cursor. If there's none above (empty
+      // editor, or cursor above every statement), run nothing.
       let stmt = stmts.find(s => s.start + 1 <= cursorLine && cursorLine <= s.start + s.lineCount)
-      if (!stmt) stmt = [...stmts].reverse().find(s => s.start + 1 <= cursorLine) ?? stmts[0]
+      if (!stmt) stmt = [...stmts].reverse().find(s => s.start + 1 <= cursorLine)
       const text = stmt?.text.trim()
       return text ? [text] : []
     },
