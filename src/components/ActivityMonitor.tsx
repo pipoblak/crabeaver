@@ -9,7 +9,10 @@ export default function ActivityMonitor() {
   const ref = useRef<HTMLDivElement>(null)
 
   const foreground = tasks.filter(t => !t.background)
-  const busy = tasks.length > 0
+  // Spin only for real work (queries/load-more). Background schema/connection
+  // checks keep the static Activity icon — otherwise the app looks like it's
+  // running a query on open while it's just revalidating connections.
+  const busy = foreground.length > 0
 
   // Close the popover on outside click. Not needed when docked — the dock lives in
   // the layout flow (below the result pane), not as a floating popover here.
