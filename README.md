@@ -196,4 +196,4 @@ the same idea, built on Rust and Tauri.
 
 ## License
 
-Not yet licensed. Add a `LICENSE` file before publishing or accepting contributions.
+Released under the [MIT License](./LICENSE) — free to use, modify, and distribute.
