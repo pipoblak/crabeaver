@@ -874,6 +874,10 @@ const SqlEditor = forwardRef<SqlEditorRef, Props>(function SqlEditor(
             quickSuggestions: { other: true, comments: false, strings: false },
             wordBasedSuggestions: 'off',
             suggestOnTriggerCharacters: true,
+            // Render suggest/hover/parameter-hint widgets in a body-level overflow
+            // layer so they aren't clipped by the results pane below the editor —
+            // Monaco then flips them upward when there's no room below.
+            fixedOverflowWidgets: true,
             parameterHints: { enabled: true },
             formatOnPaste: true,
             autoClosingBrackets: 'always',
