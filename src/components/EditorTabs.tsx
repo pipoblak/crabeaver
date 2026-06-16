@@ -6,6 +6,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { useTabs } from '@/context/TabsContext'
 import { useTaskActions } from '@/context/TasksContext'
 import { useConnections } from '@/context/ConnectionContext'
+import { useConfirm } from '@/context/ConfirmContext'
 import { useTrackedQuery, sqlPreview } from '@/hooks/useTrackedQuery'
 import SqlEditor, { type SqlEditorRef } from '@/components/SqlEditor'
 // Lazy-loaded: these tabs aren't part of the default query view, so their code
@@ -80,6 +81,10 @@ export default function EditorTabs() {
           setTabConnection, setTabDatabase, setTabQueryLimit, revealTarget } = useTabs()
   const { startTask, endTask } = useTaskActions()
   const trackedQuery = useTrackedQuery()
+  const confirm = useConfirm()
+  // Per-result-tab run generation — a settle from a superseded run is ignored so
+  // a replaced/cancelled query can't clobber the run that replaced it.
+  const runGenRef = useRef(new Map<string, number>())
   // Latest tabs for stable callbacks that only need to read (not subscribe).
   const tabsRef = useRef(tabs)
   tabsRef.current = tabs
@@ -271,6 +276,12 @@ export default function EditorTabs() {
     const sql   = applyLimit(rawSql, limit)
     const connectionId = editorTab.connectionId
 
+    // Bump the run generation for this tab; a later run supersedes this one and
+    // its settle (below) becomes a no-op.
+    const gen = (runGenRef.current.get(resultTabId) ?? 0) + 1
+    runGenRef.current.set(resultTabId, gen)
+    const current = () => runGenRef.current.get(resultTabId) === gen
+
     beginElapsed(resultTabId)
 
     // Mark running. Keep prior `data` visible while the new query runs; a fresh
@@ -298,6 +309,7 @@ export default function EditorTabs() {
 
     try {
       const data = await invoke<QueryResult>('execute_query', { connectionId, sql })
+      if (!current()) return // a newer run replaced this one — don't clobber it
       setResultMap(prev => {
         const curr = prev.get(editorTab.id)
         if (!curr) return prev
@@ -313,6 +325,7 @@ export default function EditorTabs() {
         return new Map(prev).set(editorTab.id, next)
       })
     } catch (e) {
+      if (!current()) return
       setResultMap(prev => {
         const curr = prev.get(editorTab.id)
         if (!curr) return prev
@@ -325,8 +338,10 @@ export default function EditorTabs() {
         return new Map(prev).set(editorTab.id, next)
       })
     } finally {
-      endTask(`query:${resultTabId}`)
-      endElapsed(resultTabId)
+      if (current()) {
+        endTask(`query:${resultTabId}`)
+        endElapsed(resultTabId)
+      }
     }
   }, [beginElapsed, endElapsed, persistResults, startTask, endTask])
 
@@ -367,6 +382,21 @@ export default function EditorTabs() {
 
     // Single statement → run in the current (or a new) result tab, as before.
     if (stmts.length === 1) {
+      // If a query is already running in the tab we'd reuse, ask before replacing.
+      if (!inNewResultTab) {
+        const curr = resultMap.get(tab.id)
+        const targetRunning = curr?.tabs.find(t => t.id === curr.activeId)?.running
+        if (targetRunning) {
+          const ok = await confirm({
+            title: 'Query still running',
+            message: 'A query is already running in this tab. Cancel it and run the new one?',
+            confirmLabel: 'Replace',
+            danger: true,
+          })
+          if (!ok) return
+          invoke('cancel_query', { connectionId: tab.connectionId }).catch(() => {})
+        }
+      }
       const resultTabId = ensureResultTab(tab.id, { forceNew: inNewResultTab })
       void executeInResultTab(tab, resultTabId, stmts[0])
       return
@@ -375,7 +405,7 @@ export default function EditorTabs() {
     // Multi-statement selection → one result tab per statement, run in parallel.
     const ids = createResultTabs(tab.id, stmts.length)
     ids.forEach((rid, i) => { void executeInResultTab(tab, rid, stmts[i]) })
-  }, [activeId, tabs, ensureResultTab, createResultTabs, executeInResultTab])
+  }, [activeId, tabs, resultMap, ensureResultTab, createResultTabs, executeInResultTab, confirm])
 
   // ── Result tab management ─────────────────────────────────────────────────
   const setActiveResultTab = (tabId: number, resultId: string) =>
