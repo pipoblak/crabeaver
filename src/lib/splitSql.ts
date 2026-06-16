@@ -1,7 +1,7 @@
 /**
  * Split a SQL string into individual statements on top-level `;`, ignoring
  * semicolons inside string literals (`'...'`, `"..."` with doubled-quote escapes),
- * line comments (`-- ... \n`), and block comments (`/* ... *​/`).
+ * line comments (`-- ... \n`), and slash-star block comments.
  *
  * Returns each statement trimmed, with empty/whitespace-only segments dropped.
  * A single statement (with or without a trailing `;`) returns `[stmt]`.
