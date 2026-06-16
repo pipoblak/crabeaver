@@ -1,6 +1,7 @@
 import { useState, memo } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useConnections } from '@/context/ConnectionContext'
+import { useTabs } from '@/context/TabsContext'
 import WorkspacesSection from '@/components/WorkspacesSection'
 import { capabilitiesFor, descriptorFor } from '@/connectors/registry'
 import { cacheGet, cacheSet, cacheDelete } from '@/lib/cache'
@@ -117,6 +118,10 @@ const Row = memo(function Row({ depth, icon, label, expanded: exp, onClick, load
 
 export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
   const { connections, connected, connect: ctxConnect, disconnect: ctxDisconnect } = useConnections()
+  const { tabs, activeId } = useTabs()
+  // Connection used by the active editor tab — highlighted in the tree so the
+  // sidebar follows the per-tab connection picker.
+  const activeConnId = tabs.find(t => t.id === activeId)?.connectionId
   const [loading, setLoading] = useState(new Set<string>())
   const [expanded, setExpanded]       = useState(new Set<string>()) // generic set of node keys
   const [trees, setTrees]             = useState<Record<string, ConnectionTree>>({})
@@ -358,11 +363,14 @@ export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
             ? (c.database.split('/').pop() || c.database)
             : `${c.host}:${c.port}`
 
+          const isActive  = c.id === activeConnId
           return (
             <div key={c.id}>
               {/* Connection row */}
               <div className="group flex items-center gap-1.5 cursor-pointer transition-colors hover:bg-th-hover"
-                style={{ padding: '4px 8px 4px 8px' }}
+                style={{ padding: '4px 8px 4px 6px',
+                         borderLeft: `2px solid ${isActive ? 'var(--tab-accent)' : 'transparent'}`,
+                         background: isActive ? 'var(--hover)' : undefined }}
                 onClick={() => expandConnection(c)}>
                 <span className="shrink-0 text-th-dim w-3 flex justify-center">
                   {isLoad ? <Loader2 size={10} className="animate-spin" />
@@ -370,7 +378,7 @@ export default function Sidebar({ openSettings, openTab, width = 224 }: Props) {
                 </span>
                 <span className="shrink-0 w-2 h-2 rounded-full" style={{ background: isConn ? '#22c55e' : 'var(--text-dim)' }} />
                 <div className="flex flex-col flex-1 min-w-0">
-                  <span className="text-[13px] text-th-text truncate font-medium">{c.name}</span>
+                  <span className="text-[13px] truncate font-medium" style={{ color: isActive ? 'var(--text-bright)' : 'var(--text)' }}>{c.name}</span>
                   <span className="text-[10px] text-th-dim truncate">{subtitle}</span>
                 </div>
                 <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
